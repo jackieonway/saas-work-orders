@@ -1,0 +1,15 @@
+{
+  "schemaVersion": "1.0",
+  "applicationCode": "work-orders",
+  "applicationId": "REPLACE_WITH_WORK_ORDERS_APPLICATION_UUID",
+  "menuIds": {
+    "root": "REPLACE_WITH_ROOT_MENU_UUID",
+    "ticket:read": "REPLACE_WITH_TICKET_READ_MENU_UUID",
+    "ticket:create": "REPLACE_WITH_TICKET_CREATE_MENU_UUID",
+    "ticket:update": "REPLACE_WITH_TICKET_UPDATE_MENU_UUID",
+    "ticket:delete": "REPLACE_WITH_TICKET_DELETE_MENU_UUID",
+    "ticket:export": "REPLACE_WITH_TICKET_EXPORT_MENU_UUID",
+    "notification:publish": "REPLACE_WITH_NOTIFICATION_PUBLISH_MENU_UUID"
+  },
+  "targets": []
+}

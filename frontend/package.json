@@ -1,0 +1,13 @@
+{
+  "name": "work-orders-frontend",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "独立 Vue 3 工单应用，使用 opaque iframe 与 MicroProps 2.0",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "test": "node --test tests/*.mjs"
+  },
+  "devDependencies": { "esbuild": "0.25.12" },
+  "engines": { "node": ">=24" }
+}

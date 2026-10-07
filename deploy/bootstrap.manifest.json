@@ -1,0 +1,36 @@
+{
+  "schemaVersion": "1.0",
+  "application": {
+    "code": "work-orders",
+    "name": "工单管理",
+    "icon": "ClipboardList",
+    "basePath": "/micro/work-orders",
+    "entryType": "HTML",
+    "entryUrl": "/sub-apps/work-orders/unreleased/index.html",
+    "runtimeMode": "IFRAME",
+    "autoCreateMenu": false,
+    "description": "独立工单业务试点；版本与授权由管理员逐步确认",
+    "sortOrder": 100,
+    "status": "ENABLED"
+  },
+  "oauthClient": {
+    "clientName": "work-orders-client",
+    "clientType": "CONFIDENTIAL",
+    "grantTypes": ["client_credentials"],
+    "scopes": ["openid"],
+    "redirectUris": [],
+    "accessTokenValidity": 300,
+    "refreshTokenValidity": 300,
+    "provisioning": "Administrator creates client in the platform UI and stores its generated clientId and one-time secret in the server secret store."
+  },
+  "menus": [
+    {"key":"root","parentKey":null,"type":"MENU","title":"工单管理","path":"/micro/work-orders","permission":"","sortOrder":0,"visible":true,"linkTarget":"MICRO"},
+    {"key":"ticket:read","parentKey":"root","type":"BUTTON","title":"读取工单","path":"","permission":"ticket:read","sortOrder":1,"visible":false,"linkTarget":"BLANK"},
+    {"key":"ticket:create","parentKey":"root","type":"BUTTON","title":"创建工单","path":"","permission":"ticket:create","sortOrder":2,"visible":false,"linkTarget":"BLANK"},
+    {"key":"ticket:update","parentKey":"root","type":"BUTTON","title":"更新工单","path":"","permission":"ticket:update","sortOrder":3,"visible":false,"linkTarget":"BLANK"},
+    {"key":"ticket:delete","parentKey":"root","type":"BUTTON","title":"删除工单","path":"","permission":"ticket:delete","sortOrder":4,"visible":false,"linkTarget":"BLANK"},
+    {"key":"ticket:export","parentKey":"root","type":"BUTTON","title":"导出工单","path":"","permission":"ticket:export","sortOrder":5,"visible":false,"linkTarget":"BLANK"},
+    {"key":"notification:publish","parentKey":"root","type":"BUTTON","title":"发送工单提醒","path":"","permission":"notification:publish","sortOrder":6,"visible":false,"linkTarget":"BLANK"}
+  ],
+  "grants": []
+}
