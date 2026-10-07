@@ -1,7 +1,7 @@
-FROM node:24-alpine
+FROM node:24.3.0-alpine
 WORKDIR /app
 COPY package.json package-lock.json ./
-RUN npm ci --omit=dev && npm cache clean --force
+RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund
 COPY --chown=node:node *.mjs ./
 COPY --chown=node:node migrations/ ./migrations/
 USER node

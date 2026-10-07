@@ -1,3 +1,5 @@
+import { metricsToken } from './observability.mjs'
+
 const LOOPBACK = new Set(['127.0.0.1', 'localhost', '[::1]'])
 
 function integer(env, name, fallback, min, max) {
@@ -19,6 +21,7 @@ function origin(value, production, name) {
 
 export function loadConfig(env = process.env) {
   const production = env.NODE_ENV === 'production'
+  if (production && env.NODE_TLS_REJECT_UNAUTHORIZED === '0') throw new Error('NODE_TLS_REJECT_UNAUTHORIZED cannot disable production TLS verification')
   const databaseUrl = env.WORK_ORDERS_DATABASE_URL?.trim()
   try {
     if (!databaseUrl || !['postgres:', 'postgresql:'].includes(new URL(databaseUrl).protocol)) throw new Error()
@@ -36,6 +39,7 @@ export function loadConfig(env = process.env) {
   }))]
   return Object.freeze({
     databaseUrl, platformOrigin, clientId, clientSecret, appCode: 'work-orders', host, production,
+    metricsToken: metricsToken(env, production),
     port: integer(env, 'WORK_ORDERS_PORT', 3004, production ? 1 : 0, 65535),
     platformTimeoutMs: integer(env, 'PLATFORM_AUTH_TIMEOUT_MS', 3000, 100, 10000),
     maxPlatformBodyBytes: 256 * 1024,

@@ -1,7 +1,8 @@
 import http from 'node:http'
 import { randomUUID } from 'node:crypto'
 import { ApiError, invalid, notFound, reject } from './errors.mjs'
-import { authorize, assertFresh, bearer, directoryScope, grantFor, member, platformJson, scopeSql, validId } from './auth.mjs'
+import { authorize as platformAuthorize, assertFresh, bearer, directoryScope, grantFor, member, platformJson, scopeSql, validId } from './auth.mjs'
+import { createTelemetry, metricsAllowed } from './observability.mjs'
 
 const PREFIX = '/work-orders-api'
 const PRIORITIES = ['LOW', 'NORMAL', 'HIGH']
@@ -132,15 +133,34 @@ function csvCell(value) {
   return `"${output.replaceAll('"', '""')}"`
 }
 
-async function dispatch(request, response, config, pool, fetchImpl, signal) {
+async function dispatch(request, response, config, pool, fetchImpl, signal, metadata, health) {
+  const authorize = (...args) => platformAuthorize(...args, metadata)
   const url = new URL(request.url, 'http://work-orders.invalid')
   if (url.origin !== 'http://work-orders.invalid' || !url.pathname.startsWith(`${PREFIX}/`)) reject(404, 'ROUTE_NOT_FOUND', '接口不存在')
   const route = url.pathname.slice(PREFIX.length)
+  if (route === '/health/live' && request.method === 'GET') return json(response, 200, { status: 'UP' })
+  if (route === '/metrics' && request.method === 'GET') {
+    if (!metricsAllowed(request.headers.authorization, config.metricsToken)) reject(401, 'METRICS_AUTH_REQUIRED', '监控认证无效')
+    response.writeHead(200, { 'content-type': 'text/plain; version=0.0.4; charset=utf-8' })
+    return response.end(health.telemetry.render())
+  }
   if (route === '/health' && request.method === 'GET') {
-    try {
-      const result = await pool.query("SELECT to_regclass('work_orders') IS NOT NULL AS ready")
-      return json(response, result.rows[0].ready ? 200 : 503, { status: result.rows[0].ready ? 'UP' : 'DOWN', service: 'work-orders-api', database: result.rows[0].ready ? 'UP' : 'DOWN' })
-    } catch { return json(response, 503, { status: 'DOWN', service: 'work-orders-api', database: 'DOWN' }) }
+    await Promise.all([
+      pool.query('SELECT id,tenant_id,organization_id,owner_user_id,version,deleted_at FROM work_orders LIMIT 0')
+        .then(() => pool.query('SELECT tenant_id,next_number FROM work_order_counters LIMIT 0'))
+        .then(() => { health.database = 'UP' }, () => { health.database = 'DOWN' }),
+      (async () => {
+        try {
+          const probe = await fetchImpl(new URL(`/api/apps/${config.appCode}/context`, config.platformOrigin), {
+            method: 'GET', redirect: 'error', headers: { Accept: 'application/json' },
+            signal: AbortSignal.any([signal, AbortSignal.timeout(config.platformTimeoutMs)]) })
+          await probe.body?.cancel()
+          health.platform = probe.status === 401 ? 'UP' : 'DOWN'
+        } catch { health.platform = 'DOWN' }
+      })(),
+    ])
+    const status = health.database === 'UP' && health.platform === 'UP' ? 'UP' : 'DOWN'
+    return json(response, status === 'UP' ? 200 : 503, { status, service: 'work-orders-api', checks: { database: health.database, platform: health.platform } })
   }
   const token = bearer(request.headers)
   if (route === '/tickets/export.csv' && request.method === 'GET') {
@@ -303,8 +323,20 @@ async function dispatch(request, response, config, pool, fetchImpl, signal) {
   reject(405, 'METHOD_NOT_ALLOWED', '请求方法不支持')
 }
 
-export function createServer({ config, pool, fetchImpl = fetch }) {
+export function createServer({ config, pool, fetchImpl = fetch, logger = console }) {
+  const health = { database: 'UNKNOWN', platform: 'UNKNOWN' }
+  const telemetry = createTelemetry({ service: 'work-orders', logger, routeFor: (request) => {
+    let path
+    try { path = new URL(request.url, 'http://work-orders.invalid').pathname } catch { return 'OTHER' }
+    if (['/health', '/health/live', '/metrics', '/tickets', '/tickets/export.csv', '/assignees'].some((route) => path === PREFIX + route)) return path
+    if (/^\/work-orders-api\/tickets\/[^/]+\/remind$/.test(path)) return PREFIX + '/tickets/:id/remind'
+    return /^\/work-orders-api\/tickets\/[^/]+$/.test(path) ? PREFIX + '/tickets/:id' : 'OTHER'
+  }, gauges: () => ({ saas_database_up: Number(health.database === 'UP'), saas_platform_up: Number(health.platform === 'UP'),
+    saas_health_up: Number(health.database === 'UP' && health.platform === 'UP') }) })
+  health.telemetry = telemetry
   const server = http.createServer((request, response) => {
+    const metadata = telemetry.observe(request, response)
+    const tracedFetch = (url, options) => fetchImpl(url, { ...options, headers: { ...options.headers, 'X-Request-Id': metadata.requestId } })
     const abort = new AbortController()
     request.once('aborted', () => abort.abort())
     response.once('close', () => { if (!response.writableFinished) abort.abort() })
@@ -326,10 +358,10 @@ export function createServer({ config, pool, fetchImpl = fetch }) {
       response.writeHead(204, { 'access-control-allow-methods': 'GET, POST, PATCH, DELETE, OPTIONS', 'access-control-allow-headers': 'Authorization, Content-Type' })
       return response.end()
     }
-    dispatch(request, response, config, pool, fetchImpl, abort.signal).catch((error) => {
+    dispatch(request, response, config, pool, tracedFetch, abort.signal, metadata, health).catch((error) => {
       if (response.destroyed || response.writableEnded) return
       if (error instanceof ApiError) return json(response, error.status, { code: error.code, message: error.message })
-      console.error(JSON.stringify({ event: 'work_order_request_failed', code: /^[0-9A-Z]{5}$/.test(error?.code ?? '') ? error.code : 'INTERNAL' }))
+      logger.error(JSON.stringify({ event: 'work_order_request_failed', request_id: metadata.requestId, code: /^[0-9A-Z]{5}$/.test(error?.code ?? '') ? error.code : 'INTERNAL' }))
       json(response, 500, { code: 'SERVER_ERROR', message: '业务服务暂时无法完成请求，请稍后重试' })
     })
   })

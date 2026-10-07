@@ -84,7 +84,7 @@ export function grantFor(context, resource, action) {
 }
 
 /** Fresh protected introspection and context on every request. No positive cache. */
-export async function authorize(config, token, action, fetchImpl = fetch, signal) {
+export async function authorize(config, token, action, fetchImpl = fetch, signal, metadata = {}) {
   const intro = await platformJson(config, '/oauth/introspect', {
     method: 'POST',
     headers: { authorization: `Basic ${Buffer.from(`${config.clientId}:${config.clientSecret}`).toString('base64')}`,
@@ -112,6 +112,8 @@ export async function authorize(config, token, action, fetchImpl = fetch, signal
   context.tenant.id = id(context.tenant.id)
   context.organization.id = id(context.organization.id)
   const grant = grantFor(context, 'ticket', action)
+  metadata.tenantId = context.tenant.id
+  metadata.organizationId = context.organization.id
   return { context, grant, token, expiresAt: Math.min(expiresAt, intro.exp * 1000) }
 }
 

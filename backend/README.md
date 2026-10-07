@@ -8,9 +8,13 @@ Node 24 ESM 服务，使用自己的 PostgreSQL 数据库。平台用户、组�
 2. 从 `config.env.example` 配置数据库连接、平台 origin 和绑定 `work-orders` 的机密客户端凭据。实际环境文件和客户端密钥不入 Git。
 3. 执行 `npm ci`，然后使用 Node 24 的 `node --env-file=<实际配置文件> index.mjs`。
 
-启动先在事务中按顺序执行 `migrations/*.sql`，记录 SHA-256。迁移失败或已执行迁移被修改时停止启动；不跳过错误、不重建数据表。`GET /work-orders-api/health` 检查业务数据库及工单表是否就绪。健康检查无需登录；业务授权服务故障时受保护请求返回 503。
+启动先在事务中按顺序执行 `migrations/*.sql`，记录 SHA-256。迁移失败或已执行迁移被修改时停止启动；不跳过错误、不重建数据表。`GET /work-orders-api/health` 检查工单与计数器真实所需 schema 可查询、平台保护上下文路由可达。全部 UP 才返回 200，否则 503；健康检查无需登录。`/work-orders-api/health/live` 独立表示进程存活，业务授权服务故障时受保护请求仍返回 503。
 
 生产平台 origin 必须为精确 HTTPS origin。开发模式只额外允许 loopback HTTP，不允许任意内部 DNS HTTP、重定向或来自浏览器的 origin 覆盖。所有授权 HTTP 请求禁止跟随重定向，默认单次超时 3 秒，响应最多 256 KiB。每个业务请求重新进行机密客户端内省和当前应用上下文查询，不缓存正向授权。
+
+生产还必须设置独立随机 `METRICS_TOKEN`，至少 32 字符，不能是占位值。私有 `/work-orders-api/metrics` 只接受该精确 Bearer，网关拒绝公开指标。正常 HTTPS 信任链或 `NODE_EXTRA_CA_CERTS` 加载本机测试 CA；设置 `NODE_TLS_REJECT_UNAUTHORIZED=0` 会拒绝启动。
+
+HTTP 生成／保留合法 UUID `X-Request-Id`，在响应及平台调用中传递。请求 JSON 日志使用静态路由，仅在应用内省、上下文和 grant 验证通过后记录租户／组织；不记录用户 ID、URL/query、请求体、token、机密客户端或数据库秘密。指标 labels 不包含任何业务身份。配置与本地告警见[可观测性文档](../../../docs/observability.md)。
 
 Docker 构建上下文为本目录。镜像只依赖这里的源码、迁移与 `pg`，不引用宿主仓库其它目录。默认内部端口 3004；网关保留 `/work-orders-api/*` 前缀。
 

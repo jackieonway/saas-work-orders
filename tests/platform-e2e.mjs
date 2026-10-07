@@ -32,6 +32,7 @@ const requirements = {
 }
 const missing = Object.entries(requirements).filter(([, value]) => !value).map(([name]) => name)
 const scenario=process.env.WORK_ORDERS_E2E_SCENARIO ?? 'full'
+const production=process.env.SAAS_PRODUCTION_ACCEPTANCE === '1'
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 const sorted = (rows) => rows.map((row) => row.id).sort()
 const digest = (bytes) => createHash('sha256').update(bytes).digest('hex')
@@ -98,7 +99,7 @@ function processIdentity(pid) {
     return {pid:Number(pid),parentPid:Number(fields[1]),startTime:fields[19],exe:readlinkSync(`${directory}/exe`),cwd:readlinkSync(`${directory}/cwd`)}
   } catch { return null }
 }
-async function fixture(t) {
+export async function fixture(t) {
   assert.equal(process.platform, 'linux', 'Run the entire fixture in Linux so directly owned service PIDs are tracked')
   const { default: pg } = await import(pathToFileURL(dependencies.resolve('pg')).href)
   const { io: createClient } = dependencies('socket.io-client')
@@ -115,6 +116,7 @@ async function fixture(t) {
   assert.ok(!hostHtml.includes('/@vite/client') && !hostHtml.includes('/src/main'), 'production-host proof must not use a Vite development server')
   assert.ok(/assets\/.+\.js/.test(hostHtml), 'production host must reference its built JavaScript')
   const hostHashes = inventory(hostRoot)
+  const adapter = production ? await import('../../../tests/production-native-support.mjs') : null
   const tempBase = realpathSync(os.tmpdir())
   const root = realpathSync(mkdtempSync(path.join(tempBase, TEMP_PREFIX)))
   const expectedRoot = root
@@ -128,8 +130,13 @@ async function fixture(t) {
   let browser
   let browserIdentity
   let qaRoot,qaParent,debugDeadline
+  const productionEvidence={}
   const jwtSecret = randomBytes(48).toString('hex')
   const clientSecret = randomBytes(40).toString('hex')
+  const adminUsername = production ? 'acceptance-admin' : 'admin'
+  const adminPassword = production ? randomBytes(24).toString('base64url') : 'admin123'
+  const metrics = production ? Object.fromEntries(['platform','business','notification'].map((name)=>[name,randomBytes(32).toString('base64url')])) : {}
+  if(production) { secrets.add(adminPassword); for(const value of Object.values(metrics)) secrets.add(value) }
   secrets.add(jwtSecret); secrets.add(clientSecret)
   secrets.add(Buffer.from(`work-orders-client:${clientSecret}`).toString('base64'))
   function saveOwnership() {
@@ -140,6 +147,7 @@ async function fixture(t) {
       browser:browserIdentity ? {...browserIdentity,closed:!processIdentity(browserIdentity.pid)} : null,
       visualQaRoot:qaRoot ?? null,
     })+'\n',{mode:0o600})
+    if(production)adapter.persistOwnership(JSON.parse(readFileSync(path.join(root,'ownership.json'),'utf8')))
   }
   saveOwnership()
 
@@ -211,6 +219,8 @@ async function fixture(t) {
     const captured = [logs.join(''), ...processes.flatMap((item) => [item.stdout.join(''),item.stderr.join('')])].join('\n')
     for (const value of secrets) if (value) assert.ok(!captured.includes(value), 'service/build/browser logs must not disclose connection URLs, client secret, signing key, tickets or Bearers')
     assert.equal(errors.length, 0, errors.join('; '))
+    if(production) adapter.writeEvidence({root:expectedRoot,result:productionEvidence,cleanup:{databases:databases.filter((item)=>item.created).length,
+      processes:processes.filter((item)=>!item.closed).length,browser:browserStopped?0:1,temporaryDirectories:existsSync(expectedRoot)?1:0},qaRoot})
   })
   async function createDatabase(source, kind) {
     const name = `${PREFIX}${kind}_${randomUUID().replaceAll('-', '')}`
@@ -235,20 +245,28 @@ async function fixture(t) {
   const platformDb = await createDatabase(platformAdminUrl, 'p')
   const businessDb = await createDatabase(businessAdminUrl, 'b')
   assert.notEqual(platformDb.name, businessDb.name)
-  const platformPort = await port(), businessPort = await port(), gatewayPort = await port()
-  const platformBase = `http://[::1]:${platformPort}`
+  const platformPort = await port(), businessPort = await port(), gatewayPort = await port(), notificationPort = production ? await port() : 0
+  const platformInternalBase = `http://[::1]:${platformPort}`
   const businessBase = `http://[::1]:${businessPort}`
-  const gatewayBase = `http://[::1]:${gatewayPort}`
+  const gatewayBase = `${production?'https':'http'}://[::1]:${gatewayPort}`
+  const platformBase = production ? gatewayBase : platformInternalBase
+  const runtimeEnvironment = production ? adapter.runtimeEnvironment(process.env) : process.env
+  let productionGateway
+  if(production) productionGateway = await adapter.startGateway({root,hostRoot,releaseRoot,platformPort,businessPort,gatewayPort,notificationPort,nginx,launch})
   // main uses dotenv_override: this empty owned file prevents real project or
   // ancestor configuration from overriding the explicitly isolated resources.
   writeFileSync(path.join(root, '.env'), '')
-  const platform = launch('platform', binary, [], { env: {
-    ...process.env, DATABASE_URL: platformDb.connectionString, JWT_SECRET: jwtSecret,
+  const platformEnvironment = {
+    ...runtimeEnvironment, DATABASE_URL: platformDb.connectionString, JWT_SECRET: jwtSecret,
     BIND_ADDR: `[::1]:${platformPort}`, PUBLIC_APP_URL: gatewayBase,
     MICRO_GATEWAY_ORIGIN: gatewayBase, MICRO_ALLOWED_ORIGINS: gatewayBase,
-    APPLICATION_ENVIRONMENT: 'development', AUTO_CREATE_DATABASE: 'false',
+    APPLICATION_ENVIRONMENT: production?'production':'development', AUTO_CREATE_DATABASE: 'false',
+    ...(production?{APP_ENV:'production',METRICS_TOKEN:metrics.platform,BOOTSTRAP_ADMIN_USERNAME:adminUsername,BOOTSTRAP_ADMIN_PASSWORD:adminPassword,
+      CORS_ALLOWED_ORIGINS:gatewayBase,TRUSTED_PROXY_IPS:'127.0.0.1,::1',MICRO_CA_CERT_FILE:process.env.PRODUCTION_CA_FILE,
+      OAUTH_AUTO_PURGE:'false',OAUTH_INTROSPECTION_CLIENT_REQUESTS_PER_MINUTE:'600'}:{}),
     STATIC_DIR: '', SESSION_TTL_HOURS: '1', ACCESS_TOKEN_TTL_SECONDS: '300', RUST_LOG: 'warn',
-  } })
+  }
+  const platform = launch('platform', binary, [], { env:platformEnvironment })
   async function http(base, method, endpoint, token, body, { headers = {}, timeout = 10000 } = {}) {
     if (token) headers = { ...headers, Authorization: `Bearer ${token}` }
     if (body !== undefined) headers = { ...headers, 'Content-Type': 'application/json' }
@@ -271,7 +289,7 @@ async function fixture(t) {
   }, 'actual platform main migrations and seed must complete', 60000)
   assert.deepEqual((await query(platformDb.writer, 'SELECT success FROM _sqlx_migrations WHERE version=22')).rows, [{ success: true }], 'fresh real platform binary must contain the persisted-notification migration')
   async function login(username, organizationId) {
-    const response = await platformOk('POST', '/api/auth/login', null, { username, password: 'admin123' })
+    const response = await platformOk('POST', '/api/auth/login', null, { username, password: adminPassword })
     secrets.add(response.ticket)
     assert.ok(response.memberships.some((membership) => membership.organizationId === organizationId), 'context entry requires a real direct membership')
     const context = await platformOk('POST', '/api/auth/context', response.ticket, { organizationId })
@@ -287,12 +305,12 @@ async function fixture(t) {
     }
     return actor.token
   }
-  const seeded = await query(platformDb.writer, "SELECT m.organization_id FROM memberships m JOIN users u ON u.id=m.user_id WHERE u.username='admin' LIMIT 1")
-  const administrator = await login('admin', seeded.rows[0].organization_id)
+  const seeded = await query(platformDb.writer, "SELECT m.organization_id FROM memberships m JOIN users u ON u.id=m.user_id WHERE u.username=$1 LIMIT 1",[adminUsername])
+  const administrator = await login(adminUsername, seeded.rows[0].organization_id)
   const { run: runAdmin } = await import('../deploy/platform-admin-core.mjs')
   const adminEnvironment = { PLATFORM_API_ORIGIN: platformBase, PLATFORM_ADMIN_BEARER: administrator.session, PLATFORM_CLIENT_ID: 'work-orders-client' }
-  const adminCommand = (args) => runAdmin([...args, '--environment', 'development', '--allow-loopback-http'], adminEnvironment)
-  const ids = await platformFixtures(platformDb.writer, clientSecret, adminCommand)
+  const adminCommand = (args) => runAdmin([...args, '--environment', production?'production':'development',...(production?[]:['--allow-loopback-http'])], adminEnvironment)
+  const ids = await platformFixtures(platformDb.writer, clientSecret, adminCommand,adminUsername)
   const inspect = await adminCommand(['inspect'])
   assert.equal(inspect.applicationId,ids.application); assert.equal(inspect.clientAssociated,true); assert.deepEqual(inspect.missingMenus,[])
   const repeatBootstrap = await adminCommand(['bootstrap','--apply'])
@@ -305,12 +323,15 @@ async function fixture(t) {
     ['peer', 'p11-peer', 'a-peer'], ['ownRemote', 'p11-owner', 'b-branch'],
     ['remote', 'p11-remote', 'b-branch'], ['remoteChild', 'p11-remote-child', 'b-child'], ['inherited', 'p11-inherited', 'a-branch'],
   ]) actors[key] = await login(username, ids.organizations[organization].id)
-  const business = launch('business', process.execPath, [path.join(workspace, 'business-apps/work-orders/backend/index.mjs')], { env: {
-    ...process.env, WORK_ORDERS_DATABASE_URL: businessDb.connectionString,
+  const businessEntry = production ? path.join(process.env.PRODUCTION_ARTIFACT_ROOT,'work-orders-api/index.mjs') : path.join(workspace, 'business-apps/work-orders/backend/index.mjs')
+  const businessEnvironment = {
+    ...runtimeEnvironment, WORK_ORDERS_DATABASE_URL: businessDb.connectionString,
     PLATFORM_API_ORIGIN: platformBase, PLATFORM_CLIENT_ID: 'work-orders-client', PLATFORM_CLIENT_SECRET: clientSecret,
-    NODE_ENV: 'test', WORK_ORDERS_HOST: '::1', WORK_ORDERS_PORT: String(businessPort), PLATFORM_AUTH_TIMEOUT_MS: '3000',
+    NODE_ENV: production?'production':'test', WORK_ORDERS_HOST: '::1', WORK_ORDERS_PORT: String(businessPort), PLATFORM_AUTH_TIMEOUT_MS: '3000',
+    ...(production?{METRICS_TOKEN:metrics.business,NODE_EXTRA_CA_CERTS:process.env.PRODUCTION_CA_FILE}:{}),
     WORK_ORDERS_ALLOWED_ORIGINS: 'null',
-  } })
+  }
+  const business = launch('business', process.execPath, [businessEntry], { env:businessEnvironment })
   await until(async () => {
     assert.ok(!business.error && !business.closed, 'actual Node business main exited before readiness')
     try { return (await http(businessBase, 'GET', API)).status === 401 } catch { return false }
@@ -320,21 +341,31 @@ async function fixture(t) {
   assert.equal((await query(platformDb.writer, "SELECT to_regclass('work_orders')::text AS name")).rows[0].name, null, 'platform database must not contain business tickets')
   const capture = (...values) => logs.push(JSON.stringify(values, (_, value) => value instanceof Error ? { code: safeCode(value) } : value))
   const logger = { info: capture, warn: capture, error: capture, debug: capture, log: capture }
-  const config = { ...loadConfig({ DATABASE_URL: platformDb.connectionString, PLATFORM_API_BASE_URL: platformBase, NOTIFICATION_ALLOWED_ORIGINS: gatewayBase }), host: '::1', port: 0, recheckMs: 1000, healthProbeMs: 30000 }
-  notificationService = createNotificationService(config, { store: createPostgresStore(config, logger), logger })
-  const notificationAddress = await notificationService.start()
-  await until(async () => (await notificationService.probeHealth()).status === 'UP', 'notification service must use the real platform and PostgreSQL')
+  let notificationAddress,notificationProcess,notificationEnvironment
+  if(production) {
+    notificationEnvironment={...runtimeEnvironment,NODE_ENV:'production',METRICS_TOKEN:metrics.notification,DATABASE_URL:platformDb.connectionString,
+      PLATFORM_API_BASE_URL:gatewayBase,NOTIFICATION_ALLOWED_ORIGINS:gatewayBase,NOTIFICATION_HOST:'::1',NOTIFICATION_PORT:String(notificationPort),
+      NOTIFICATION_AUTH_RECHECK_MS:'1000',NOTIFICATION_HEALTH_PROBE_MS:'1000',NODE_EXTRA_CA_CERTS:process.env.PRODUCTION_CA_FILE}
+    notificationProcess=launch('notification',process.execPath,[path.join(process.env.PRODUCTION_ARTIFACT_ROOT,'notification-ws/index.ts')],{env:notificationEnvironment})
+    notificationAddress={port:notificationPort}
+    await until(async()=>{try{return (await http(`http://[::1]:${notificationPort}`,'GET','/health')).data?.status==='UP'}catch{return false}},'native production notification must become ready')
+  } else {
+    const config = { ...loadConfig({ DATABASE_URL: platformDb.connectionString, PLATFORM_API_BASE_URL: platformBase, NOTIFICATION_ALLOWED_ORIGINS: gatewayBase }), host: '::1', port: 0, recheckMs: 1000, healthProbeMs: 30000 }
+    notificationService = createNotificationService(config, { store: createPostgresStore(config, logger), logger })
+    notificationAddress = await notificationService.start()
+    await until(async () => (await notificationService.probeHealth()).status === 'UP', 'notification service must use the real platform and PostgreSQL')
+  }
 
   async function command(label, args) {
-    const item = launch(label, process.execPath, args)
+    const item = launch(label, process.execPath, args,{env:runtimeEnvironment})
     await Promise.race([item.exited, delay(60000)])
     assert.ok(item.closed && !item.error && item.child.exitCode === 0, 'actual frontend build and packager must complete successfully')
   }
   const manifests = {}, releaseFiles = {}
   for (const version of ['1.0.0', '1.0.1']) {
     const output = path.join(root, `vue-${version}`)
-    await command('vue-build', [path.join(workspace, 'business-apps/work-orders/frontend/scripts/build.mjs'), '--out-dir', output, '--version', version, '--allowed-host-origin', gatewayBase])
-    await command('packager', [path.join(workspace, 'scripts/package-microapp.mjs'), '--app', APP, '--environment', 'development', '--version', version, '--input', output, '--output-root', releaseRoot])
+    await command('vue-build', [path.join(production?process.env.PRODUCTION_SOURCE_ROOT:workspace, 'business-apps/work-orders/frontend/scripts/build.mjs'), '--out-dir', output, '--version', version, '--allowed-host-origin', gatewayBase])
+    await command('packager', [path.join(production?process.env.PRODUCTION_SOURCE_ROOT:workspace, 'scripts/package-microapp.mjs'), '--app', APP, '--environment', production?'production':'development', '--version', version, '--input', output, '--output-root', releaseRoot])
     const packedRoot = path.join(releaseRoot, APP, 'versions', version)
     releaseFiles[version] = path.join(packedRoot,'release.json')
     manifests[version] = JSON.parse(readFileSync(releaseFiles[version], 'utf8'))
@@ -351,6 +382,9 @@ async function fixture(t) {
   const quoted = (value) => `"${value.replaceAll('\\', '/')}"`
   const mime = process.env.NGINX_MIME_TYPES ?? [path.resolve(path.dirname(nginx), '../conf/mime.types'), path.resolve(path.dirname(nginx), '../../conf/mime.types')].find(existsSync)
   assert.ok(mime && existsSync(mime), 'supply NGINX_MIME_TYPES from the local Nginx distribution')
+  let gateway
+  if(production) gateway=productionGateway
+  else {
   let nginxConfig = readFileSync(path.join(workspace, 'deploy/nginx.conf'), 'utf8')
   for (const [source, replacement] of [
     ['worker_processes auto;', 'worker_processes 1;'], ['include mime.types;', `include ${quoted(mime)};`],
@@ -362,7 +396,8 @@ async function fixture(t) {
   nginxConfig = `pid ${quoted(path.join(root, 'nginx.pid'))};\nerror_log stderr warn;\n${nginxConfig.replace('http {', 'http {\n    access_log off;')}`
   const configPath = path.join(root, 'nginx.conf')
   writeFileSync(configPath, nginxConfig)
-  const gateway = launch('nginx', nginx, ['-p', `${root}/`, '-c', configPath, '-g', 'daemon off;'])
+  gateway = launch('nginx', nginx, ['-p', `${root}/`, '-c', configPath, '-g', 'daemon off;'])
+  }
   await until(async () => {
     assert.ok(!gateway.error && !gateway.closed, 'owned Nginx exited before readiness')
     try { return (await http(gatewayBase, 'GET', '/')).status === 200 } catch { return false }
@@ -381,7 +416,7 @@ async function fixture(t) {
   let scheduled = 0
   async function pace() {
     const slot = Math.max(Date.now(), scheduled)
-    scheduled = slot + 2150
+    scheduled = slot + (production?50:2150)
     await delay(Math.max(0, slot - Date.now()))
   }
   async function businessCall(actor, method, endpoint = API, body, options = {}) {
@@ -412,7 +447,8 @@ async function fixture(t) {
     [scope, actor.userId, actor.organizationId, ids.application, actions])
   }
   async function connectSocket(actor) {
-    const socket = createClient(gatewayBase, { path: '/socket.io/', transports: ['websocket'], extraHeaders: { Origin: gatewayBase }, reconnection: false, forceNew: true, autoConnect: false })
+    const socket = createClient(gatewayBase, { path: '/socket.io/', transports: ['websocket'], extraHeaders: { Origin: gatewayBase }, reconnection: false, forceNew: true, autoConnect: false,
+      ...(production?{ca:readFileSync(process.env.PRODUCTION_CA_FILE),rejectUnauthorized:true}:{}) })
     sockets.push(socket)
     const events = [], authenticated = [], denied = [], errors = []
     socket.on('notification', (packet) => events.push(packet))
@@ -432,7 +468,8 @@ async function fixture(t) {
     if(browser?.isConnected()) return browser
     const configHome=path.join(root,'xdg-config'),cacheHome=path.join(root,'xdg-cache')
     mkdirSync(configHome,{recursive:true}); mkdirSync(cacheHome,{recursive:true})
-    const browserEnvironment={...process.env,XDG_CONFIG_HOME:configHome,XDG_CACHE_HOME:cacheHome,TMPDIR:root}
+    const browserEnvironment={...(production?adapter.runtimeEnvironment(process.env):process.env),XDG_CONFIG_HOME:configHome,XDG_CACHE_HOME:cacheHome,TMPDIR:root}
+    if(production) await adapter.prepareBrowser({root,environment:browserEnvironment})
     if (process.env.WORK_ORDERS_E2E_FONT_DIR) {
       const fontDirectory=realpathSync(path.resolve(process.env.WORK_ORDERS_E2E_FONT_DIR))
       assert.ok(lstatSync(fontDirectory).isDirectory(),'visual QA font directory must be a local runtime directory')
@@ -453,7 +490,7 @@ async function fixture(t) {
   function qaImage(name) {
     assert.match(name,/^[a-z0-9-]+$/)
     if(!qaRoot) {
-      qaParent=realpathSync(path.join(workspace,'target/phase11-runtime'))
+      qaParent=realpathSync(path.join(workspace,production?'target/phase12-runtime':'target/phase11-runtime'))
       const candidate=path.join(qaParent,`qa-${path.basename(root)}`)
       mkdirSync(candidate) // exclusive: never use or remove an existing directory
       writeFileSync(path.join(candidate,'ownership.json'),JSON.stringify({ownerRoot:root})+'\n',{flag:'wx',mode:0o600})
@@ -482,10 +519,13 @@ async function fixture(t) {
     return false
   }
   return { root, ids, actors, administrator, manifests, releaseFiles, adminCommand, gatewayBase, platformBase, platformDb, businessDb, secrets,
+    ...(production?{production:true,productionGateway,platform,business,notificationProcess,notificationEnvironment,businessEnvironment,
+      platformEnvironment,metrics,platformInternalBase,businessBase,notificationPort,launch,stop,processes,databases,saveOwnership,
+      jwtSecret,clientSecret,adminPassword,adminUsername,platformAdminUrl,businessAdminUrl,pg,createDatabase,productionEvidence}:{}),
     http, platformOk, appToken, login, accepted, denied, businessCall, create, records, setGrants, connectSocket, launchBrowser, qaImage, visualCheckpoint, debugResume, pace, hostHashes, hostRoot, logs }
 }
 
-async function platformFixtures(writer, clientSecret, adminCommand) {
+async function platformFixtures(writer, clientSecret, adminCommand,adminUsername='admin') {
   await query(writer, "INSERT INTO tenants(name,code,is_platform) VALUES('Phase11 tenant A','p11-a',false),('Phase11 tenant B','p11-b',false)")
   await query(writer, `INSERT INTO organizations(tenant_id,name,code)
     SELECT id,CASE code WHEN 'p11-a' THEN 'Phase11 A top' ELSE 'Phase11 B top' END,
@@ -499,7 +539,7 @@ async function platformFixtures(writer, clientSecret, adminCommand) {
   await query(writer, "INSERT INTO organizations(tenant_id,parent_id,name,code) SELECT tenant_id,id,'Phase11 A peer','p11-a-peer' FROM organizations WHERE code='p11-a-top'")
   const usernames = ['p11-owner','p11-other','p11-child','p11-peer','p11-remote','p11-remote-child','p11-inherited']
   assert.equal((await query(writer, `INSERT INTO users(username,password_hash,real_name,is_super_admin)
-    SELECT fixture,seeded.password_hash,fixture,false FROM users seeded CROSS JOIN unnest($1::text[]) fixture WHERE seeded.username='admin'`, [usernames])).rowCount, usernames.length)
+    SELECT fixture,seeded.password_hash,fixture,false FROM users seeded CROSS JOIN unnest($1::text[]) fixture WHERE seeded.username=$2`, [usernames,adminUsername])).rowCount, usernames.length)
   const memberships = [['p11-owner','p11-a-branch'],['p11-owner','p11-a-child'],['p11-owner','p11-b-branch'],
     ['p11-other','p11-a-branch'],['p11-child','p11-a-child'],['p11-peer','p11-a-peer'],['p11-remote','p11-b-branch'],['p11-remote-child','p11-b-child'],['p11-inherited','p11-a-branch']]
   for (const [username, code] of memberships) await query(writer, `INSERT INTO memberships(user_id,organization_id)
@@ -533,11 +573,8 @@ async function platformFixtures(writer, clientSecret, adminCommand) {
   return { application, organizations, users }
 }
 
-test(`Phase11 actual platform + independent business DB + production Vue iframe release E2E${scenario==='browser' ? ' (browser DEBUG only)' : ''}`, {
-  skip: missing.length ? `Opt in with ${missing.join(', ')}` : false, timeout: 1200000,
-}, async (t) => {
+export async function runFullAcceptance(t, h) {
   assert.ok(['full','browser'].includes(scenario),'WORK_ORDERS_E2E_SCENARIO must be full or browser (DEBUG only)')
-  const h = await fixture(t)
   console.log('[Phase11] Actual two-database fixture, independent services, production host and two Vue packages ready')
   t.beforeEach((current) => console.log(`[Phase11] ${current.name}`))
   const tickets = {}
@@ -757,7 +794,11 @@ test(`Phase11 actual platform + independent business DB + production Vue iframe 
   await t.test('actual production host and Vue iframe CRUD, reminder, context switch and immutable release rollback', async () => {
     await checkedBrowserScenario(h,tickets)
   })
-})
+}
+
+if(!production) test(`Phase11 actual platform + independent business DB + production Vue iframe release E2E${scenario==='browser' ? ' (browser DEBUG only)' : ''}`, {
+  skip: missing.length ? `Opt in with ${missing.join(', ')}` : false, timeout: 1200000,
+}, async (t) => runFullAcceptance(t,await fixture(t)))
 
 async function revokeData(h,actor,resource,action) {
   await query(h.platformDb.writer,`DELETE FROM membership_data_grants g USING memberships m
