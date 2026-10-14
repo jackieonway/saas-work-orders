@@ -18,7 +18,7 @@ const dependencies = createRequire(path.join(workspace, 'mini-services/notificat
 const APP = 'work-orders'
 const API = '/work-orders-api/tickets'
 const PREFIX = 'work_orders_platform_e2e_'
-const TEMP_PREFIX = 'dante-work-orders-platform-e2e-'
+const TEMP_PREFIX = 'platform-work-orders-platform-e2e-'
 const platformAdminUrl = process.env.WORK_ORDERS_E2E_PLATFORM_DATABASE_URL ?? process.env.TEST_DATABASE_URL
 const businessAdminUrl = process.env.WORK_ORDERS_E2E_BUSINESS_DATABASE_URL ?? platformAdminUrl
 const binaryArgument = process.env.WORK_ORDERS_E2E_BACKEND_BINARY
@@ -389,7 +389,7 @@ export async function fixture(t) {
   for (const [source, replacement] of [
     ['worker_processes auto;', 'worker_processes 1;'], ['include mime.types;', `include ${quoted(mime)};`],
     ['listen 80;', `listen [::1]:${gatewayPort};`],
-    ['/srv/dante/frontend/dist', hostRoot], ['/srv/dante/micro-apps', releaseRoot],
+    ['/srv/platform/frontend/dist', hostRoot], ['/srv/platform/micro-apps', releaseRoot],
     ['http://127.0.0.1:3001', platformBase], ['http://127.0.0.1:3004', businessBase],
     ['http://127.0.0.1:3003', `http://[::1]:${notificationAddress.port}`],
   ]) { assert.ok(nginxConfig.includes(source), 'actual Nginx template must contain the expected deployment configuration'); nginxConfig = nginxConfig.replaceAll(source, replacement) }
@@ -924,9 +924,9 @@ async function browserScenario(h,tickets) {
   })
   await context.addInitScript(({token,app}) => {
     if(window.top!==window) return
-    localStorage.setItem('dante-token',token)
-    localStorage.setItem('dante-current-app',app)
-    localStorage.setItem('dante-theme','light')
+    localStorage.setItem('platform-token',token)
+    localStorage.setItem('platform-current-app',app)
+    localStorage.setItem('platform-theme','light')
   },{token:actor.session,app:h.ids.application})
   // Scheduling and fault injection retain the actual request and actual API
   // response. One committed reminder reply is lost to test its real retry;
@@ -981,7 +981,7 @@ async function browserScenario(h,tickets) {
     const isolated=await frame.locator('body').evaluate(() => {
       let parentBlocked=false,storageBlocked=false
       try { parent.document.body } catch { parentBlocked=true }
-      try { localStorage.getItem('dante-token') } catch { storageBlocked=true }
+      try { localStorage.getItem('platform-token') } catch { storageBlocked=true }
       return {parentBlocked,storageBlocked}
     })
     assert.deepEqual(isolated,{parentBlocked:true,storageBlocked:true})
@@ -1129,7 +1129,7 @@ async function browserScenario(h,tickets) {
     await h.denied(heldRead.token,'GET',API,undefined,401)
     const childActor={session:switched.accessToken,userId:actor.userId,tenantId:actor.tenantId,organizationId:child.organizationId}
     assert.ok((await h.records(childActor)).every((record) => record.organizationId===child.organizationId))
-    const sessionBeforeRelease=await page.evaluate(() => localStorage.getItem('dante-token'))
+    const sessionBeforeRelease=await page.evaluate(() => localStorage.getItem('platform-token'))
     h.secrets.add(sessionBeforeRelease)
     const hostRequestsBeforeRelease=hostAssetRequests.length
     await page.evaluate(() => { window.__phase11RetiredFrames=[] })
@@ -1144,7 +1144,7 @@ async function browserScenario(h,tickets) {
       await frame.locator(`[data-testid="ticket-row"][data-ticket-id="${tickets.otherChild.id}"]`).waitFor()
       assert.equal(await page.locator('.micro-mount-zone iframe').count(),1)
       assert.ok(await page.evaluate(() => window.__phase11HostMarker==='phase11-owned-host-document' && window.__phase11HostRoot===document.querySelector('#root') && !window.__phase11RetiredFrames.at(-1).isConnected),'actual release replacement must retain the running production host document and retire the old iframe')
-      assert.ok(await page.evaluate((expected) => localStorage.getItem('dante-token')===expected,sessionBeforeRelease),'release replacement must preserve the real platform session')
+      assert.ok(await page.evaluate((expected) => localStorage.getItem('platform-token')===expected,sessionBeforeRelease),'release replacement must preserve the real platform session')
       assert.equal(hostAssetRequests.length,hostRequestsBeforeRelease,'independent release activation must not reload production host JavaScript')
       const current=await h.platformOk('GET',`/api/apps/${APP}/context`,await h.appToken(childActor))
       assert.equal(current.application.deploymentVersion,version); assert.equal(current.application.entryVersionId,releases[version].id)
@@ -1165,7 +1165,7 @@ async function browserScenario(h,tickets) {
     h.logs.push(String(error?.message ?? 'browser failure'))
     const iframeFlags=[]
     for(const candidate of page.frames().filter((item) => item!==page.mainFrame())) {
-      try { iframeFlags.push(await candidate.evaluate(() => ({vue:!!window.Vue,sdk:!!window.DanteMicroIframe?.connect,
+      try { iframeFlags.push(await candidate.evaluate(() => ({vue:!!window.Vue,sdk:!!window.MicroIframe?.connect,
         config:!!window.__WORK_ORDERS_CONFIG__,app:!!document.querySelector('[data-testid="work-orders-app"]'),scripts:document.scripts.length}))) } catch {}
     }
     console.log(`[Phase11 safe browser diagnostic] ${JSON.stringify({stage:h.browserStage,pageErrors:errors.length,resourceFailures,iframeFlags})}`)

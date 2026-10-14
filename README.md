@@ -69,7 +69,7 @@ node scripts/package-microapp.mjs --app work-orders --environment production --v
 联合测试在 Linux Node 24 下运行，所有服务进程与浏览器使用同一系统的可执行文件，便于严格跟踪自有 PID。先准备当前宿主的 `frontend/dist`、工单前后端依赖和本机运行时，再从仓库根目录执行：
 
 ```bash
-export WORK_ORDERS_E2E_BACKEND_BINARY=/absolute/path/to/dante-cloud-backend
+export WORK_ORDERS_E2E_BACKEND_BINARY=/absolute/path/to/saas-platform-backend
 export WORK_ORDERS_E2E_HOST_DIST=/absolute/path/to/frontend/dist
 export NGINX_BIN=/absolute/path/to/nginx
 export PLAYWRIGHT_MODULE=/absolute/path/to/node_modules/playwright

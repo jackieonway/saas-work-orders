@@ -8,7 +8,7 @@
     if (!options || typeof options.appCode !== 'string' || !options.appCode ||
         !Array.isArray(options.allowedHostOrigins) || options.allowedHostOrigins.length === 0 ||
         !options.lifecycle || typeof options.lifecycle.mount !== 'function' || typeof options.lifecycle.unmount !== 'function') {
-      throw new Error('DanteMicroIframe requires appCode, explicit allowedHostOrigins and mount/unmount lifecycle')
+      throw new Error('MicroIframe requires appCode, explicit allowedHostOrigins and mount/unmount lifecycle')
     }
     var origins = options.allowedHostOrigins.map(function (origin) {
       var url = new URL(origin)
@@ -67,12 +67,12 @@
       var controller = new AbortController()
       var snapshot = Object.assign({}, dto, { signal: controller.signal, controller: controller })
       snapshot.onNavigate = function (path) {
-        if (usable(snapshot) && typeof path === 'string') send('DANTE_MICRO_NAVIGATE', snapshot.contextEpoch, { path: path })
+        if (usable(snapshot) && typeof path === 'string') send('MICRO_NAVIGATE', snapshot.contextEpoch, { path: path })
       }
       snapshot.onNotify = function (message, variant) {
         variant = variant === undefined ? 'default' : variant
         if (usable(snapshot) && typeof message === 'string' && message.length > 0 && message.length <= 1000 && variants.indexOf(variant) >= 0) {
-          send('DANTE_MICRO_NOTIFY', snapshot.contextEpoch, { message: message, variant: variant })
+          send('MICRO_NOTIFY', snapshot.contextEpoch, { message: message, variant: variant })
         }
       }
       context = snapshot
@@ -82,26 +82,26 @@
     function receive(event) {
       var data = event.data
       if (stopped || !data || typeof data !== 'object' || data.nonce !== nonce || !Number.isSafeInteger(data.contextEpoch)) return
-      if (data.kind === 'DANTE_MICRO_DOWNLOAD_RESULT') {
+      if (data.kind === 'MICRO_DOWNLOAD_RESULT') {
         var pending = pendingDownloads.get(data.requestId)
         if (pending && usable(pending.snapshot) && data.contextEpoch === pending.snapshot.contextEpoch) {
           settleDownload(data.requestId, data.ok === true ? undefined : new Error('CSV download denied'))
         }
         return
       }
-      if (data.kind === 'DANTE_MICRO_UNMOUNT') {
+      if (data.kind === 'MICRO_UNMOUNT') {
         if (!context || data.contextEpoch === context.contextEpoch) dispose()
         return
       }
-      if (data.kind === 'DANTE_MICRO_CONTEXT_ABORT') {
+      if (data.kind === 'MICRO_CONTEXT_ABORT') {
         if (context && data.contextEpoch === context.contextEpoch) { sequence++; abortContext() }
         return
       }
-      if ((data.kind !== 'DANTE_MICRO_MOUNT' && data.kind !== 'DANTE_MICRO_UPDATE') ||
+      if ((data.kind !== 'MICRO_MOUNT' && data.kind !== 'MICRO_UPDATE') ||
           !Number.isSafeInteger(data.requestId) || data.requestId <= 0 || data.props?.contextEpoch !== data.contextEpoch) return
       var snapshot = hydrate(data.props)
       if (!snapshot) {
-        send('DANTE_MICRO_ERROR', data.contextEpoch, { requestId: data.requestId, code: 'INVALID_CONTEXT' })
+        send('MICRO_ERROR', data.contextEpoch, { requestId: data.requestId, code: 'INVALID_CONTEXT' })
         return
       }
       var taskSequence = ++sequence
@@ -117,10 +117,10 @@
             mounted = true
             await lifecycle.mount(container, snapshot)
           }
-          if (usable(snapshot) && taskSequence === sequence) send('DANTE_MICRO_ACK', snapshot.contextEpoch, { requestId: data.requestId })
+          if (usable(snapshot) && taskSequence === sequence) send('MICRO_ACK', snapshot.contextEpoch, { requestId: data.requestId })
         } catch (_) {
           // 任意应用错误文本可能含 token；只向宿主返回可诊断的固定错误码。
-          if (usable(snapshot) && taskSequence === sequence) send('DANTE_MICRO_ERROR', snapshot.contextEpoch,
+          if (usable(snapshot) && taskSequence === sequence) send('MICRO_ERROR', snapshot.contextEpoch,
             { requestId: data.requestId, code: 'LIFECYCLE_FAILED' })
         }
       })
@@ -129,7 +129,7 @@
       var data = event.data
       // 不信任 payload 自称 hostOrigin；origin 是浏览器提供且由应用部署配置允许。
       if (stopped || port || event.source !== global.parent || origins.indexOf(event.origin) < 0 ||
-          !data || data.kind !== 'DANTE_MICRO_CONNECT' || data.appCode !== options.appCode || data.contractVersion !== VERSION ||
+          !data || data.kind !== 'MICRO_CONNECT' || data.appCode !== options.appCode || data.contractVersion !== VERSION ||
           typeof data.nonce !== 'string' || !/^[a-zA-Z0-9-]{16,128}$/.test(data.nonce) ||
           !Number.isSafeInteger(data.contextEpoch) || data.contextEpoch <= 0 || event.ports.length !== 1 ||
           typeof event.ports[0].postMessage !== 'function') return
@@ -139,7 +139,7 @@
       port.onmessage = receive
       port.onmessageerror = dispose
       port.start()
-      send('DANTE_MICRO_READY', data.contextEpoch, { appCode: options.appCode, contractVersion: VERSION })
+      send('MICRO_READY', data.contextEpoch, { appCode: options.appCode, contractVersion: VERSION })
     }
     global.addEventListener('message', receiveConnect)
     global.addEventListener('pagehide', dispose, { once: true })
@@ -162,7 +162,7 @@
           pendingDownloads.set(id, { snapshot: snapshot, resolve: resolve, reject: reject, abort: abort, timer: timer })
           snapshot.signal.addEventListener('abort', abort, { once: true })
           if (!usable(snapshot)) { abort(); return }
-          send('DANTE_MICRO_DOWNLOAD', snapshot.contextEpoch, { requestId: id,
+          send('MICRO_DOWNLOAD', snapshot.contextEpoch, { requestId: id,
             resource: file.resource, filename: file.filename, content: file.content })
         })
       },
@@ -194,5 +194,5 @@
       },
     }
   }
-  global.DanteMicroIframe = Object.freeze({ connect: connect, contractVersion: VERSION })
+  global.MicroIframe = Object.freeze({ connect: connect, contractVersion: VERSION })
 })(window)

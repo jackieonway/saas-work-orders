@@ -8,11 +8,11 @@ import { fileURLToPath } from 'node:url'
 
 const builder = fileURLToPath(new URL('../scripts/build.mjs', import.meta.url))
 function build(t, origin, api = '/work-orders-api') {
-  const temp = realpathSync(os.tmpdir()), root = realpathSync(mkdtempSync(path.join(temp, 'dante-work-orders-build-test-')))
+  const temp = realpathSync(os.tmpdir()), root = realpathSync(mkdtempSync(path.join(temp, 'platform-work-orders-build-test-')))
   t.after(() => {
     const relative = path.relative(temp, root)
     assert.ok(relative && !path.isAbsolute(relative) && !relative.startsWith('..' + path.sep))
-    assert.ok(path.basename(root).startsWith('dante-work-orders-build-test-'))
+    assert.ok(path.basename(root).startsWith('platform-work-orders-build-test-'))
     assert.equal(realpathSync(root), root)
     rmSync(root, { recursive: true, force: true })
   })

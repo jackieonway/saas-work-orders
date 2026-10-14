@@ -404,10 +404,10 @@ function renderApp() {
     state.active ? renderEditor(props) : null, state.active ? renderDelete() : null,
   ])
 }
-if (!config?.allowedHostOrigins?.length || !window.DanteMicroIframe?.connect) {
+if (!config?.allowedHostOrigins?.length || !window.MicroIframe?.connect) {
   document.querySelector('#app').textContent = '工单应用尚未配置宿主连接，请联系平台管理员。'
 } else {
-  bridge = window.DanteMicroIframe.connect({ appCode: APP_CODE, allowedHostOrigins: config.allowedHostOrigins,
+  bridge = window.MicroIframe.connect({ appCode: APP_CODE, allowedHostOrigins: config.allowedHostOrigins,
     container: document.querySelector('#app'), lifecycle: {
       mount(container, props) { vueApp = createApp({ render: renderApp }); vueApp.mount(container); acceptProps(props) },
       update(props) { acceptProps(props) },

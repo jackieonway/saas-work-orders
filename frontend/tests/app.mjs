@@ -60,7 +60,7 @@ function harness(rows = [ticket()]) {
   const vue = { h, reactive: (value) => { state = value; return value }, nextTick: (callback) => Promise.resolve().then(callback),
     createApp: (component) => ({ mount() { render = component.render; render() }, unmount() { render = null } }) }
   const browser = { Vue: vue, __WORK_ORDERS_CONFIG__: { version: 'unit-fixture', allowedHostOrigins: ['https://host.test'], apiBase: '/work-orders-api' },
-    DanteMicroIframe: { connect(options) { lifecycle = options.lifecycle; return { downloadCsv: async () => {} } } } }
+    MicroIframe: { connect(options) { lifecycle = options.lifecycle; return { downloadCsv: async () => {} } } } }
   const fetch = async (url, options) => {
     const request = { url: new URL(url, 'https://app.test'), method: options.method, body: options.body ? JSON.parse(options.body) : undefined,
       signal: options.signal, headers: options.headers }
