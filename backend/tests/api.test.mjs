@@ -3,7 +3,7 @@ import test from 'node:test'
 import { randomUUID } from 'node:crypto'
 import {
   ACTIONS, API, accepted, call, createTicket, denied,
-  grantFor, matrix, records, replaceGrant, testDatabaseUrl,
+  grantFor, identity, matrix, records, replaceGrant, testDatabaseUrl,
 } from './helpers.mjs'
 
 const databaseUrl = await testDatabaseUrl()
@@ -108,6 +108,65 @@ test('real PG + HTTP platform fixture: four scopes isolate list/detail/export an
     }
     replaceGrant(actor.state, 'create', null)
     await denied(h.url, actor.token, 'POST', API, { title: 'No create data grant' }, [403])
+  })
+})
+
+test('real PG + HTTP platform fixture: child context cannot query or mutate ancestor and sibling data even under SELF or TENANT', options, async (t) => {
+  const h = await matrix(t, databaseUrl)
+  const actor = h.actors.ownChild
+  const grandchild = randomUUID()
+  const ownGrandchild = h.platform.add(identity(actor.actor.userId, h.tenantA, grandchild), 'a-grandchild-own')
+  const ownPeer = h.platform.add(identity(actor.actor.userId, h.tenantA, h.peer), 'a-peer-own')
+  const descendant = await createTicket(h.url, ownGrandchild, 'Owned grandchild visible from child')
+  const sibling = await createTicket(h.url, ownPeer, 'Owned sibling hidden from child')
+  const path = (row) => `${API}/${row.id}`
+  actor.state.organizationScopeIds = [h.child, grandchild]
+  const hidden = [h.tickets.ownRoot, h.tickets.otherRoot, h.tickets.peer, sibling, h.tickets.ownRemote]
+  for (const scope of ['SELF', 'ORG_SUBTREE', 'TENANT']) {
+    await t.test(`${scope} intersects the child subtree ceiling for lists, details, CSV and writes`, async () => {
+      // A broad grant cannot widen the independently supplied context ceiling.
+      const organizationIds = scope === 'TENANT' ? [] : [h.root, h.child, grandchild, h.peer]
+      for (const action of ['read', 'export', 'update', 'delete']) replaceGrant(actor.state, action, scope, organizationIds)
+      const visible = scope === 'SELF' ? [h.tickets.ownChild, descendant]
+        : [h.tickets.ownChild, h.tickets.otherChild, descendant]
+      assert.deepEqual(sortedIds(await records(h.url, actor)), sortedIds(visible))
+      assert.deepEqual(sortedIds(await records(h.url, actor, `&organizationId=${h.root}`)), [])
+      assert.deepEqual(sortedIds(await records(h.url, actor, `&organizationId=${h.peer}`)), [])
+      for (const row of visible) await accepted(h.url, actor.token, 'GET', path(row))
+      for (const row of hidden) {
+        await denied(h.url, actor.token, 'GET', path(row), undefined, [404])
+        await denied(h.url, actor.token, 'PATCH', path(row), { version: row.version, title: 'Escaped child data ceiling' }, [404])
+        await denied(h.url, actor.token, 'DELETE', path(row), { version: row.version }, [404])
+      }
+      const csv = await call(h.url, actor.token, 'GET', `${API}/export.csv`)
+      assert.equal(csv.status, 200)
+      for (const row of visible) assert.ok(csv.text.includes(row.title))
+      for (const row of hidden) assert.ok(!csv.text.includes(row.title))
+      const saved = await h.query('SELECT title,version,deleted_at FROM work_orders WHERE id=$1', [sibling.id])
+      assert.equal(saved.rows[0].title, sibling.title)
+      assert.equal(saved.rows[0].version, sibling.version)
+      assert.equal(saved.rows[0].deleted_at, null)
+    })
+  }
+  await t.test('descendant writes work, while assignee directories also obey the ceiling', async () => {
+    replaceGrant(actor.state, 'update', 'ORG_SUBTREE', [h.child, grandchild])
+    replaceGrant(actor.state, 'delete', 'ORG_SUBTREE', [h.child, grandchild])
+    const updated = await accepted(h.url, actor.token, 'PATCH', path(descendant), { version: descendant.version, priority: 'HIGH' })
+    assert.equal(updated.organizationId, grandchild)
+    await accepted(h.url, actor.token, 'DELETE', path(updated), { version: updated.version })
+    replaceGrant(actor.state, 'create', 'TENANT')
+    const directory = '/work-orders-api/assignees?action=create'
+    for (const organizationId of [h.root, h.peer]) {
+      await denied(h.url, actor.token, 'GET', `${directory}&organizationId=${organizationId}`, undefined, [403])
+    }
+    const members = await accepted(h.url, actor.token, 'GET', `${directory}&organizationId=${grandchild}`)
+    assert.ok(members.records.some((row) => row.userId === actor.actor.userId))
+  })
+  await t.test('older contexts without a ceiling fall back to the selected organization', async () => {
+    actor.state.organizationScopeIds = undefined
+    replaceGrant(actor.state, 'read', 'TENANT')
+    assert.deepEqual(sortedIds(await records(h.url, actor)), sortedIds([h.tickets.ownChild, h.tickets.otherChild]))
+    await denied(h.url, actor.token, 'GET', path(h.tickets.ownRoot), undefined, [404])
   })
 })
 
@@ -265,7 +324,8 @@ test('real PG + HTTP platform fixture: writes obey scopes, optimistic concurrenc
     assert.equal(current.version, before)
   })
 
-  await t.test('SELF uses owner rather than assignee and permits own records across same-tenant organizations', async () => {
+  await t.test('SELF uses owner rather than assignee and permits own records only within the current subtree', async () => {
+    actor.state.organizationScopeIds = [h.root, h.child]
     replaceGrant(actor.state, 'read', 'SELF')
     replaceGrant(actor.state, 'update', 'SELF')
     replaceGrant(actor.state, 'delete', 'SELF')
@@ -578,6 +638,8 @@ test('real PG + HTTP platform fixture: protocol binding and upstream transport f
       { user: { id: h.actors.other.actor.userId } }, { tenant: { id: h.tenantB } }, { organization: { id: h.child } },
       { expiresAt: new Date(Date.now() - 1).toISOString() }, { expiresAt: 'not-a-date' },
       { expiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString() },
+      { organizationScopeIds: [] }, { organizationScopeIds: [h.child] },
+      { organizationScopeIds: 'not-an-array' }, { organizationScopeIds: [h.root, 'invalid-uuid'] },
     ]) {
       actor.state.contextPatch = patch
       await denied(h.url, actor.token, 'GET', API, undefined, [401, 503])

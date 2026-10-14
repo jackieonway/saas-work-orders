@@ -40,7 +40,7 @@ const scopes = {
   SELF: ['ownRoot', 'ownChild'],
   ORG: ['ownRoot', 'otherRoot'],
   ORG_SUBTREE: ['ownRoot', 'otherRoot', 'ownChild', 'otherChild'],
-  TENANT: ['ownRoot', 'otherRoot', 'ownChild', 'otherChild', 'peer'],
+  TENANT: ['ownRoot', 'otherRoot', 'ownChild', 'otherChild'],
 }
 
 function safeCode(error) {
@@ -615,6 +615,10 @@ export async function runFullAcceptance(t, h) {
     for (const [scope, keys] of Object.entries(scopes)) {
       await scopeTest.test(scope, async () => {
         await h.setGrants(root,scope)
+        const context = await h.platformOk('GET', `/api/apps/${APP}/context`, await h.appToken(root))
+        assert.deepEqual([...context.organizationScopeIds].sort(), [root.organizationId, h.actors.child.organizationId].sort())
+        assert.ok(context.dataGrants.filter((grant) => grant.resource === 'ticket')
+          .every((grant) => grant.scope === (scope === 'TENANT' ? 'ORG_SUBTREE' : scope)))
         assert.deepEqual(sorted(await h.records(root)), keys.map((key) => tickets[key].id).sort())
         const exported = await h.businessCall(root,'GET',`${API}/export.csv`)
         assert.equal(exported.status,200); assert.match(exported.headers.get('content-type'),/text\/csv/i)
@@ -641,12 +645,32 @@ export async function runFullAcceptance(t, h) {
         assert.equal(persisted.rowCount,1); assert.ok(persisted.rows[0].deleted_at)
         assert.ok(!(await h.records(root)).some((row) => row.id === disposable.id))
         assert.ok(!(await h.businessCall(root,'GET',`${API}/export.csv`)).text.includes(disposable.title))
-        const representative = { SELF:h.actors.ownChild, ORG:h.actors.other, ORG_SUBTREE:h.actors.child, TENANT:h.actors.peer }[scope]
+        const representative = { SELF:h.actors.ownChild, ORG:h.actors.other, ORG_SUBTREE:h.actors.child, TENANT:h.actors.child }[scope]
         const distantDelete = await h.create(representative,`Authorized scope deletion ${scope}`)
         await h.accepted(root,'DELETE',ticketPath(distantDelete),{version:distantDelete.version})
         assert.ok((await query(h.businessDb.writer,'SELECT deleted_at FROM work_orders WHERE id=$1',[distantDelete.id])).rows[0].deleted_at)
       })
     }
+  })
+  await t.test('switching to a child restricts owned ancestor and sibling rows for SELF and TENANT grants', async () => {
+    const child = h.actors.ownChild
+    for (const scope of ['SELF', 'TENANT']) {
+      await h.setGrants(child, scope)
+      const context = await h.platformOk('GET', `/api/apps/${APP}/context`, await h.appToken(child))
+      assert.deepEqual(context.organizationScopeIds, [child.organizationId])
+      assert.deepEqual(sorted(await h.records(child)),
+        (scope === 'SELF' ? [tickets.ownChild.id] : [tickets.ownChild.id, tickets.otherChild.id]).sort())
+      for (const row of [tickets.ownRoot, tickets.otherRoot, tickets.peer]) {
+        await h.denied(child, 'GET', ticketPath(row))
+        await h.denied(child, 'PATCH', ticketPath(row), { version: row.version, title: 'Ancestor or sibling escape' })
+        await h.denied(child, 'DELETE', ticketPath(row), { version: row.version })
+      }
+      const csv = await h.businessCall(child, 'GET', `${API}/export.csv`)
+      assert.equal(csv.status, 200)
+      assert.ok(csv.text.includes(tickets.ownChild.title))
+      assert.ok(!csv.text.includes(tickets.ownRoot.title) && !csv.text.includes(tickets.peer.title))
+    }
+    await h.setGrants(child, 'TENANT')
   })
   await t.test('assignee is a valid direct member and never expands SELF ownership', async () => {
     await h.setGrants(root,'TENANT')

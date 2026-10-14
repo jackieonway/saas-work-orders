@@ -77,10 +77,25 @@ export function grantFor(context, resource, action) {
   const organizationIds = [...new Set(grant.organizationIds.map((item) => item.toLowerCase()))]
   if ((grant.scope === 'ORG' && (organizationIds.length !== 1 || organizationIds[0] !== context.organization.id)) ||
       (grant.scope === 'ORG_SUBTREE' && !organizationIds.includes(context.organization.id)) ||
-      (['SELF', 'TENANT'].includes(grant.scope) && organizationIds.length !== 0)) {
+      (grant.scope === 'SELF' && organizationIds.length !== 0 && !organizationIds.includes(context.organization.id)) ||
+      (grant.scope === 'TENANT' && organizationIds.length !== 0)) {
     reject(403, 'DATA_DENIED', '数据授权范围无效')
   }
   return { ...grant, organizationIds }
+}
+
+function organizationScope(context) {
+  // Only the fresh trusted platform context may explicitly remove the hard
+  // organization ceiling. Older contexts fail closed to the selected org.
+  if (context.organizationScopeIds === null) return null
+  if (context.organizationScopeIds === undefined) return [context.organization.id]
+  const scope = context.organizationScopeIds
+  if (!Array.isArray(scope) || scope.length > 10000 || !scope.every(validId)) {
+    reject(401, 'INVALID_CONTEXT', '平台组织数据范围无效')
+  }
+  const ids = [...new Set(scope.map((value) => value.toLowerCase()))]
+  if (!ids.includes(context.organization.id)) reject(401, 'INVALID_CONTEXT', '平台组织数据范围无效')
+  return ids
 }
 
 /** Fresh protected introspection and context on every request. No positive cache. */
@@ -111,6 +126,7 @@ export async function authorize(config, token, action, fetchImpl = fetch, signal
   context.user.id = id(context.user.id)
   context.tenant.id = id(context.tenant.id)
   context.organization.id = id(context.organization.id)
+  context.organizationScopeIds = organizationScope(context)
   const grant = grantFor(context, 'ticket', action)
   metadata.tenantId = context.tenant.id
   metadata.organizationId = context.organization.id
@@ -123,11 +139,17 @@ export function assertFresh(auth) {
 
 export function scopeSql(auth, start = 1) {
   const values = [auth.context.tenant.id]
+  const bind = (value) => { values.push(value); return `$${start + values.length - 1}` }
   let sql = `tenant_id=$${start} AND deleted_at IS NULL`
+  const ceiling = organizationScope(auth.context)
+  if (ceiling !== null) sql += ` AND organization_id=ANY(${bind(ceiling)}::uuid[])`
   switch (auth.grant.scope) {
-    case 'SELF': sql += ` AND owner_user_id=$${start + 1}`; values.push(auth.context.user.id); break
-    case 'ORG': sql += ` AND organization_id=$${start + 1}`; values.push(auth.context.organization.id); break
-    case 'ORG_SUBTREE': sql += ` AND organization_id=ANY($${start + 1}::uuid[])`; values.push(auth.grant.organizationIds); break
+    case 'SELF':
+      sql += ` AND owner_user_id=${bind(auth.context.user.id)}`
+      if (auth.grant.organizationIds.length) sql += ` AND organization_id=ANY(${bind(auth.grant.organizationIds)}::uuid[])`
+      break
+    case 'ORG': sql += ` AND organization_id=${bind(auth.context.organization.id)}`; break
+    case 'ORG_SUBTREE': sql += ` AND organization_id=ANY(${bind(auth.grant.organizationIds)}::uuid[])`; break
     case 'TENANT': break
     default: reject(403, 'DATA_DENIED', '数据授权范围无效')
   }
@@ -136,8 +158,10 @@ export function scopeSql(auth, start = 1) {
 
 export function directoryScope(auth, organizationId) {
   const { grant, context } = auth
-  const allowed = grant.scope === 'TENANT' || (grant.scope === 'ORG_SUBTREE' ? grant.organizationIds.includes(organizationId)
-    : organizationId === context.organization.id)
+  const ceiling = organizationScope(context)
+  const allowed = (ceiling === null || ceiling.includes(organizationId)) &&
+    (grant.scope === 'TENANT' || (grant.scope === 'ORG_SUBTREE' ? grant.organizationIds.includes(organizationId)
+      : organizationId === context.organization.id))
   if (!allowed) reject(403, 'DATA_DENIED', '当前数据授权不允许选择该组织的处理人；请切换到该组织')
 }
 

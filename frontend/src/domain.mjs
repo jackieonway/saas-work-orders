@@ -15,7 +15,10 @@ export function validContext(props, now = Date.now()) {
     typeof props.token === 'string' && !!props.token && !!props.signal && !props.signal.aborted &&
     Date.parse(props.expiresAt) > now && Date.parse(props.tokenExpiresAt) > now &&
     !!props.user?.id && !!props.tenant?.id && !!props.organization?.id &&
-    Array.isArray(props.permissions) && Array.isArray(props.dataGrants)
+    Array.isArray(props.permissions) && Array.isArray(props.dataGrants) &&
+    (props.organizationScopeIds == null || (Array.isArray(props.organizationScopeIds) &&
+      props.organizationScopeIds.length <= 10000 && props.organizationScopeIds.every((value) => typeof value === 'string' && !!value) &&
+      props.organizationScopeIds.includes(props.organization.id)))
 }
 
 export function sameIdentity(left, right) {
@@ -29,7 +32,14 @@ export function grants(props, resource, action) {
     grant.subjectUserId === props.user.id && grant.tenantId === props.tenant.id && Object.hasOwn(SCOPE_LABELS, grant.scope))
 }
 
+function withinOrganizationCeiling(props, organizationId) {
+  if (props.organizationScopeIds === null) return true
+  return Array.isArray(props.organizationScopeIds) ? props.organizationScopeIds.includes(organizationId)
+    : organizationId === props.organization.id
+}
+
 function organizationAllowed(grant, organizationId, props) {
+  if (!withinOrganizationCeiling(props, organizationId)) return false
   if (grant.scope === 'TENANT') return true
   if (grant.scope === 'ORG') return organizationId === props.organization.id
   return grant.scope === 'ORG_SUBTREE' && (organizationId === props.organization.id || (Array.isArray(grant.organizationIds) && grant.organizationIds.includes(organizationId)))
@@ -38,8 +48,10 @@ function organizationAllowed(grant, organizationId, props) {
 export function canTicket(props, action, ticket) {
   const available = grants(props, 'ticket', action)
   if (!ticket) return available.length > 0
-  if (ticket.tenantId !== props?.tenant.id) return false
-  return available.some((grant) => grant.scope === 'SELF' ? ticket.ownerUserId === props.user.id : organizationAllowed(grant, ticket.organizationId, props))
+  if (!available.length || ticket.tenantId !== props?.tenant.id || !withinOrganizationCeiling(props, ticket.organizationId)) return false
+  return available.some((grant) => grant.scope === 'SELF' ? ticket.ownerUserId === props.user.id &&
+    Array.isArray(grant.organizationIds) && (grant.organizationIds.length === 0 || grant.organizationIds.includes(ticket.organizationId))
+    : organizationAllowed(grant, ticket.organizationId, props))
 }
 
 export function canAssign(props, ticket) {
@@ -58,7 +70,9 @@ export function canRemind(props, ticket) {
 
 export function visibleScope(props, action = 'read') {
   const available = grants(props, 'ticket', action)
-  return ['TENANT', 'ORG_SUBTREE', 'ORG', 'SELF'].find((scope) => available.some((grant) => grant.scope === scope))
+  const scope = ['TENANT', 'ORG_SUBTREE', 'ORG', 'SELF'].find((scope) => available.some((grant) => grant.scope === scope))
+  return scope === 'TENANT' && props.organizationScopeIds !== null
+    ? (props.organizationScopeIds === undefined ? 'ORG' : 'ORG_SUBTREE') : scope
 }
 
 export function routeView(routePath = '') {

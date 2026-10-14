@@ -8,11 +8,13 @@ function props(extra = {}) {
   return { contractVersion: '2.0', appCode: 'work-orders', basePath: '/micro/work-orders', contextVersion: 'ctx-1', contextEpoch: 1,
     token: 'mock-app-token', expiresAt: new Date(Date.now() + 60_000).toISOString(), tokenExpiresAt: new Date(Date.now() + 60_000).toISOString(),
     signal: new AbortController().signal, user: { id: 'user-1' }, tenant: { id: 'tenant-1' }, organization: { id: 'org-1' },
+    organizationScopeIds: ['org-1', 'org-2'],
     permissions: ['ticket:read', 'ticket:create', 'ticket:update', 'ticket:delete', 'ticket:export', 'notification:publish'],
     dataGrants: ['read', 'create', 'update', 'delete', 'export'].map((action) => grant('SELF', action)), ...extra }
 }
 function grant(scope = 'SELF', action = 'read', extra = {}) {
-  return { resource: 'ticket', action, scope, subjectUserId: 'user-1', tenantId: 'tenant-1', organizationIds: ['org-2'], ...extra }
+  const organizationIds = scope === 'TENANT' ? [] : scope === 'ORG' ? ['org-1'] : ['org-1', 'org-2']
+  return { resource: 'ticket', action, scope, subjectUserId: 'user-1', tenantId: 'tenant-1', organizationIds, ...extra }
 }
 const ticket = (extra = {}) => ({ id: 'ticket-1', tenantId: 'tenant-1', organizationId: 'org-1', ownerUserId: 'user-1', assigneeUserId: 'user-2', ...extra })
 
@@ -35,6 +37,37 @@ test('ORG/ORG_SUBTREE/TENANT scopes and cross-organization assignment follow dis
   assert.equal(canAssign(props(), originalOwn), false)
   assert.equal(canAssign(props({ dataGrants: [grant('ORG_SUBTREE', 'update')] }), originalOwn), true)
   assert.equal(visibleScope(props()), 'SELF')
+})
+
+test('child-context presentation denies owned ancestor and sibling tickets across every grant scope', () => {
+  for (const scope of ['SELF', 'ORG_SUBTREE', 'TENANT']) {
+    const dataGrants = ['read', 'update', 'delete'].map((action) => grant(scope, action,
+      { organizationIds: scope === 'TENANT' ? [] : ['org-1', 'org-2', 'org-parent', 'org-sibling'] }))
+    dataGrants.push(grant(scope, 'publish', { resource: 'notification',
+      organizationIds: scope === 'TENANT' ? [] : ['org-1', 'org-2', 'org-parent', 'org-sibling'] }))
+    const context = props({ dataGrants })
+    assert.equal(canTicket(context, 'read', ticket({ organizationId: 'org-2' })), true)
+    for (const organizationId of ['org-parent', 'org-sibling']) {
+      const row = ticket({ organizationId, assigneeUserId: 'user-1' })
+      for (const action of ['read', 'update', 'delete']) assert.equal(canTicket(context, action, row), false)
+      assert.equal(canAssign(context, row), false)
+      assert.equal(canRemind(context, row), false)
+    }
+    if (scope === 'TENANT') assert.equal(visibleScope(context), 'ORG_SUBTREE')
+  }
+})
+
+test('legacy presentation context defaults to current organization and invalid ceilings expose no actions', () => {
+  const legacy = props({ organizationScopeIds: undefined, dataGrants: [grant('TENANT')] })
+  assert.equal(canTicket(legacy, 'read', ticket()), true)
+  assert.equal(canTicket(legacy, 'read', ticket({ organizationId: 'org-2' })), false)
+  assert.equal(visibleScope(legacy), 'ORG')
+  for (const organizationScopeIds of [[], ['org-sibling'], ['org-1', null], 'org-1']) {
+    assert.equal(canTicket(props({ organizationScopeIds }), 'create'), false)
+  }
+  const platformRoot = props({ organizationScopeIds: null, dataGrants: [grant('TENANT')] })
+  assert.equal(canTicket(platformRoot, 'read', ticket({ organizationId: 'org-sibling' })), true)
+  assert.equal(visibleScope(platformRoot), 'TENANT')
 })
 
 test('manual reminder requires ticket read plus independent notification permission/grant for its receiver', () => {

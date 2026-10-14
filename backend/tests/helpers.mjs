@@ -115,6 +115,9 @@ export function grantFor(actor, action, scope = 'TENANT', organizationIds = []) 
 export function actorState(actor) {
   return {
     actor, active: true, permissions: ACTIONS.map((action) => `ticket:${action}`),
+    // The legacy four-scope matrix explicitly models a trusted platform-root
+    // ceiling. Organization-switch regressions override this with real IDs.
+    organizationScopeIds: null,
     grants: ACTIONS.map((action) => grantFor(actor, action)),
     introPatch: {}, contextPatch: {}, memberPatch: {}, notificationPatch: {}, mode: {},
     calls: { introspect: 0, context: 0, assignee: 0, notification: 0 },
@@ -200,6 +203,7 @@ export async function platformFixture(t) {
           tenant: { id: state.actor.tenantId, code: 'fixture', name: 'Fixture Tenant' },
           organization: { id: state.actor.organizationId, name: 'Fixture Organization', path: 'Fixture' },
           roles: [], permissions: state.permissions, dataGrants: state.grants, menus: [],
+          organizationScopeIds: state.organizationScopeIds,
           ...state.contextPatch,
         })
       } else if (stage === 'notification') {
