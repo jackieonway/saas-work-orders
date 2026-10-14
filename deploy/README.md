@@ -1,6 +1,6 @@
 # 工单应用：平台初始化、授权与独立发布
 
-这里的 Node 24 管理工具只使用现有平台 API。平台应用身份固定为 `work-orders`，运行方式固定为 **IFRAME + HTML**；宿主通过 iframe bridge 和平台 SDK 提供短期应用 token。工具不会创建 TRUSTED 应用、读取平台 JWT 签名密钥、重建宿主或默认分配任何租户／组织／角色／成员授权。
+这里的 Node 24 管理工具只使用现有平台 API。通用上传与部署流程见[架构文档](../../../docs/architecture.md#releases)，本文件说明该命令行工具的参数、授权草案和兼容发布流程。平台应用身份固定为 `work-orders`，运行方式固定为 **IFRAME + HTML**；宿主通过 iframe bridge 和平台 SDK 提供短期应用 token。工具不会创建 TRUSTED 应用、读取平台 JWT 签名密钥、重建宿主或默认分配任何租户／组织／角色／成员授权。
 
 ## 1. 准备管理员上下文和机密客户端
 
@@ -117,7 +117,7 @@ node business-apps/work-orders/deploy/platform-admin.mjs grants-plan --manifest 
 5. 独立数据 grants 当前没有公共管理写 API。DBA 审阅生成 SQL：它锁定并核对精确 app/menu/tenant/org/role/user/direct membership，仅插入该应用批准的 resource/action/scope，`ON CONFLICT DO NOTHING`；既有同 action 不同 scope 报错，不自动扩权或覆盖。草案默认以 `ROLLBACK` 结束；在确认后由 DBA 显式改最终语句为 `COMMIT`，在受控事务中执行并保留操作审计。不要把 SQL 内容混入数据库凭据文件。
 6. 用真实非 super 用户进入指定组织，获取工单应用 token，查询 `/api/apps/work-orders/context`，检查 user/tenant/org、六项中的批准权限和独立 grants；随后验证业务接口及拒绝场景，并对比其它应用授权快照。
 
-**不要用 `PUT /api/users/{id}/memberships` 作为自动补成员步骤。** 该接口删除再重建管理范围内的 membership，即使保留同一个 org 也会更换 UUID，并通过 FK 级联删除其所有应用的独立 grants。缺少成员关系必须由管理员在另一个受控流程处理，再重新读取和批准数据授权。
+**不要把成员维护混入自动部署授权。** 当前 `PUT /api/users/{id}/memberships` 对保留项采用差量维护，保持有效 membership UUID；实际删除成员仍会级联删除其数据 grants 并撤销关联会话。缺少成员关系时先由管理员完成成员管理，再重新核对 membership UUID 和批准的数据授权，不能直接沿用旧快照。
 
 父组织角色权限可能继承到子组织；子组织仍须有自己的应用／菜单授权，独立 data grant 只来自当前组织直接 membership，不随角色继承。
 
@@ -131,7 +131,7 @@ node scripts/package-microapp.mjs --app work-orders --environment production --v
 
 默认生成 `deploy/micro-apps/work-orders/versions/1.0.0/` 和其中的 `release.json`，入口为 `/sub-apps/work-orders/versions/1.0.0/index.html`。已有版本目录不能覆盖，变更使用新版本号；不要发布 `.env`、secret、source token 或其它敏感文件。
 
-将版本目录复制到网关对应的不可变目录，保留旧版本；确认部署支持 iframe。标准 Vue/Vite 模块在 opaque iframe origin 中匿名获取资源，需要 `Access-Control-Allow-Origin: *` 或 `null`，入口的 CSP frame-ancestors / X-Frame-Options 必须允许宿主。平台代理预检使用服务器配置的精确 origin allowlist；CLI 的配置不能扩大该列表，详细规则见 [应用独立发布 API](../../../docs/application-release-api.md)。
+将版本目录复制到网关对应的不可变目录，保留旧版本；确认部署支持 iframe。标准 Vue/Vite 模块在 opaque iframe origin 中匿名获取资源，需要 `Access-Control-Allow-Origin: *` 或 `null`，入口的 CSP frame-ancestors / X-Frame-Options 必须允许宿主。平台代理预检使用服务器配置的精确 origin allowlist；CLI 的配置不能扩大该列表，详细规则见 [应用独立发布 API](../../../docs/architecture.md#release-contract)。
 
 每一步都是独立命令：
 
@@ -168,4 +168,4 @@ HTTP 请求固定在管理员配置的 origin，使用 Node 原生 HTTP(S)，不
 node --test business-apps/work-orders/deploy/tests/platform-admin.mjs business-apps/work-orders/deploy/tests/grants.mjs
 ```
 
-已在 Node 24 验证 31 项：实际本地 HTTP fixture 与 CLI 子进程验证管理员工具的安全边界，离线 grant 测试验证输入白名单、明确目标、冲突拒绝及 SQL 写入范围。这些测试不使用真实平台／PostgreSQL，不执行生成 SQL；实际两租户、工单数据、通知和独立版本切换由业务试点端到端验收另行验证。
+测试使用本地 HTTP fixture、CLI 子进程及离线 grant 输入检查，覆盖管理工具协议、冲突拒绝和 SQL 范围。它们不使用真实平台／PostgreSQL，也不执行生成 SQL；真实授权、业务数据和版本切换需运行工单端到端测试。测试数量与结果以当前运行输出为准。

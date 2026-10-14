@@ -1,6 +1,6 @@
 # 独立工单业务试点
 
-本应用按已批准的[业务提案](../../docs/business-pilot-proposal.md)实现。平台管理用户、租户、组织、操作权限、独立数据授权、应用 token、通知和发布指针；工单服务使用自己的 PostgreSQL 保存实际业务数据。Vue 前端通过默认 opaque iframe 和 MicroProps 2.0 bridge 接入宿主。
+业务模型和平台边界见[系统架构](../../docs/architecture.md#platform-capabilities)。平台管理用户、租户、组织、操作权限、独立数据授权、应用 token、通知和发布指针；工单服务使用自己的 PostgreSQL 保存实际业务数据。Vue 前端通过默认 opaque iframe 和 MicroProps 2.0 bridge 接入宿主。
 
 ## 部署组成
 
@@ -38,7 +38,7 @@ docker compose --env-file .env.docker --profile work-orders up -d --build work-o
 docker compose --env-file .env.docker --profile work-orders --profile work-orders-local-db up -d --build work-orders-postgres work-orders-api
 ```
 
-生产容器固定 `NODE_ENV=production`，平台 origin 必须是实际 HTTPS 网关，TLS 证书正常验证，不将 `http://backend:3001` 作为生产内省地址。公开宿主、应用版本入口和 API 使用 HTTPS。根 Caddy 示例监听 HTTP：生产需将站点设为已确认域名、移除 `auto_https off`、开放／映射 443，并持久化 Caddy `/data` 与 `/config`；前置 TLS 或 Nginx 部署需要对应证书和 HTTPS 转发设置。`PUBLIC_APP_URL` 单独设置不会自动配置 TLS。
+生产容器固定 `NODE_ENV=production`，平台 origin 使用实际 HTTPS 网关并保持 TLS 验证。当前生产前端镜像使用 `deploy/Caddyfile.production`，通过 `PUBLIC_APP_URL` 配置 HTTPS 站点，Compose 映射 443 并持久化证书目录；`deploy/Caddyfile` 是 HTTP 兼容示例。原生 Nginx 或前置 TLS 按实际证书与上游部署，详见[运行部署](../../docs/architecture.md#deployment)。
 
 网关将 `/work-orders-api` 和 `/work-orders-api/*` 保留完整前缀转发到业务 API；未知路径返回 API 404，不进入宿主 HTML。Caddy 上游为 `work-orders-api:3004`，Nginx 独立部署示例为 `127.0.0.1:3004`。服务未部署时该路由不可用，业务 profile 不随基础平台默认启动。
 
@@ -81,6 +81,6 @@ node --env-file=.env.test --test business-apps/work-orders/tests/platform-e2e.mj
 
 视觉检查可启用 `WORK_ORDERS_E2E_VISUAL_QA=1`，截图保存到 Git 忽略的 `target/phase11-runtime/qa-<本次随机目录名>/`；其中 ownership.json 记录本次自有目录。服务、数据库、浏览器及临时文件照常清理，截图保留至审查人员明确确认后，仅删除该次已核对归属的 QA 目录，不因计时结束而丢弃截图。Linux 缺少中文字体时，可用 `WORK_ORDERS_E2E_FONT_DIR` 指向已有本地字体目录；测试生成自有 fontconfig 配置与缓存，浏览器 profile、缓存和下载也放在自有临时目录。不要把测试字体或 runtime cache 打包为业务前端资源。
 
-测试保留平台现有内省每分钟 30 次限制，按约 2.1 秒间隔执行受保护业务请求；应用 token 仍通过真实接口续签。完整范围与浏览器／发布场景需要数分钟。2026-10-07 正常全量联合验收 16/16 通过、0 fail／cancel／skip，100 个宿主文件在 v1→v2→回滚过程中哈希不变；具体版本、组件证据及自有资源清理见[验收记录](../../docs/phase11-validation.md)。缺少配置后的跳过不视为通过。
+联调测试包含受保护请求的节奏控制，应用 token 通过真实接口续签。当前每客户端内省默认配额为 600 次/分钟，另有 IP、失败认证和并发门禁。缺少配置后的跳过不视为通过。
 
-用户已于 2026-10-02 确认[本机隔离 Linux 原生准生产交付方案](../../docs/delivery-acceptance-proposal.md)：Phase 12 实际验证 HTTPS、健康／指标、故障告警、加密备份与新库恢复；RPO 24 小时／RTO 1 小时为演练目标，不承诺商业 SLA，不自动清理业务／通知／审计／会话数据。正式现网域名与主机、密钥管理接入及保留期在现网部署时另行确认。当前机器没有 Docker daemon；Compose 配置检查不计作容器构建或启动证据，实际容器运行留待 runner。Phase 11 的门禁和完整联合验收结果见[工单试点验收记录](../../docs/phase11-validation.md)。
+历史验收结果统一见[架构文档](../../docs/architecture.md#validation)，目标环境需要重新运行验证，配置解析不能代替镜像构建、容器启动或真实 HTTPS 验收。

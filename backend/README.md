@@ -14,7 +14,7 @@ Node 24 ESM 服务，使用自己的 PostgreSQL 数据库。平台用户、组�
 
 生产还必须设置独立随机 `METRICS_TOKEN`，至少 32 字符，不能是占位值。私有 `/work-orders-api/metrics` 只接受该精确 Bearer，网关拒绝公开指标。正常 HTTPS 信任链或 `NODE_EXTRA_CA_CERTS` 加载本机测试 CA；设置 `NODE_TLS_REJECT_UNAUTHORIZED=0` 会拒绝启动。
 
-HTTP 生成／保留合法 UUID `X-Request-Id`，在响应及平台调用中传递。请求 JSON 日志使用静态路由，仅在应用内省、上下文和 grant 验证通过后记录租户／组织；不记录用户 ID、URL/query、请求体、token、机密客户端或数据库秘密。指标 labels 不包含任何业务身份。配置与本地告警见[可观测性文档](../../../docs/observability.md)。
+HTTP 生成／保留合法 UUID `X-Request-Id`，在响应及平台调用中传递。请求 JSON 日志使用静态路由，仅在应用内省、上下文和 grant 验证通过后记录租户／组织；不记录用户 ID、URL/query、请求体、token、机密客户端或数据库秘密。指标 labels 不包含任何业务身份。配置与本地告警见[可观测性文档](../../../docs/architecture.md#observability)。
 
 Docker 构建上下文为本目录。镜像只依赖这里的源码、迁移与 `pg`，不引用宿主仓库其它目录。默认内部端口 3004；网关保留 `/work-orders-api/*` 前缀。
 
