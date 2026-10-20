@@ -8,3 +8,15 @@ coverage/
 !.env.example
 *.pem
 *.key
+
+# Independent frontend/backend build outputs and private configuration
+**/node_modules/
+**/target/
+**/dist/
+**/*.tsbuildinfo
+**/.env*
+!**/.env*.example
+/backend/.integration/
+/backend/.business-checkouts/
+/frontend/deploy/micro-apps/
+/frontend/dist.layout-incomplete/

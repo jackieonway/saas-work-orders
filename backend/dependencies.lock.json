@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "sourceRepository": "rust-saas",
+  "sourceRevision": "120c211587460f391cf30db73350188ee4ab1882",
+  "sdkVersion": "1.0.0",
+  "files": {
+    "backend/vendor/operational-telemetry/Cargo.lock": "2e3b612bc2ba42434b7ddbc32446442657356364a6083b951a3c5f16ae4cdf9a",
+    "backend/vendor/operational-telemetry/Cargo.toml": "9f3b14ff00778e84b66b085ba9aa1b56f97b742f68c6c5a00ef15cf9722b5818",
+    "backend/vendor/operational-telemetry/src/lib.rs": "ae4fa26581d616e9301a5ed167dcea1a56c50a224e29a6c068a4248b7ec3900c",
+    "frontend/vendor/iframe-bridge.js": "16434ed209846c1e41f3d74f22654027289e44caf26e4d77fe1aeb0146b03ee5",
+    "frontend/vendor/micro-sdk.mjs": "2365b2c6cf6be201d930ae6ca1010bd59ce3f7fa4ab6a0df965189529f43c837",
+    "frontend/vendor/vue.global.prod.js": "b72394052eef1eeda1752db3758ce1be6f88016903f22e5241cc732ea307478e",
+    "frontend/vendor/vue.LICENSE.txt": "ea4239d56944b8a5881124cf2804b95ba2bf2cb98029623b1858722bbc5b0e3e",
+    "backend/deploy/bootstrap.manifest.json": "66ab88154f7d7f1a364420550076085b2a3d43967c013bd27719b382ee21c91c",
+    "frontend/deploy/build-static.mjs": "ed18e010960ccd64a655665f29405a0ae6fb89ef9fdda33bab18aff7e6355503",
+    "backend/deploy/compose.env.example": "1b702b9ba3f922faadf1b842aa836f0df45cf44b749eb59a4f01a625c119ebce",
+    "frontend/deploy/gateway-policy.mjs": "3fdd1d69f7898706f34a5faadfc22e6356a57fc8ddabcf5d505ea6729d00c5cc",
+    "backend/deploy/grants.manifest.example.json": "d281fa3a0cc107eb51e33e56fda0c8f2b101c9c6c89a76db15dde89bda6d2e63",
+    "frontend/deploy/render-static.mjs": "226f7a44df10c8f164ac6a0bd4ac684ee0e50795ad51b77081ad86c2402231ae"
+  },
+  "layout": "frontend-backend",
+  "layoutAdaptation": "Deployment helper paths are adapted for independent frontend and backend contexts; upstream SDK and telemetry bytes are unchanged."
+}

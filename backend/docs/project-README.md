@@ -3,7 +3,7 @@
 本仓库包含独立前端、Rust API、业务迁移与部署配置。构建无需平台源码或同级目录。运行时通过 HTTP 接入平台，使用独立 PostgreSQL 库与账号。
 
 ```powershell
-node scripts/check-inputs.mjs
+node backend/scripts/check-inputs.mjs
 npm --prefix frontend ci
 npm --prefix frontend run build -- --allowed-host-origin https://platform.example.com
 npm --prefix frontend test
@@ -43,18 +43,18 @@ Phase32 增加默认禁用的私有指标端点：显式设置独立 `WORK_ORDER
 | 独立 Rust API | `backend/Cargo.toml`，`work-orders-api` 二进制 | 独立业务DB、双历史与live/ready；授权、读写／CSV、创建幂等、成员目录／分配预校验及持久提醒意图／正式通知发布 |
 | Node参考测试模块 | backend/server.mjs及兼容测试 | 仅验证历史协议/CORS/迁移；index已退役，npm start运行Rust |
 | 业务 PostgreSQL | 独立数据库和账号 | 不读取平台表，不复用平台数据库 URL |
-| 平台 bootstrap/授权/发布工具 | [deploy/README.md](deploy/README.md) | 当前平台管理员 session，明确应用及授权对象，分步执行 |
+| 平台 bootstrap/授权/发布工具 | [backend/deploy/README.md](backend/deploy/README.md) | 当前平台管理员 session，明确应用及授权对象，分步执行 |
 | 持久通知实时服务 | [notification-ws](../../mini-services/notification-ws/README.md) | 平台 DB 与内部 session 校验，真实收件箱为权威来源 |
 
 客户端不持有OAuth client secret或JWT签名密钥。Rust受保护请求先Basic内省，再以同一应用Bearer取 `work-orders` context，功能permission与 `ticket/<action>` grant分别检查。SELF仍按owner，处理人不扩大范围；tenant、组织硬上限及grant落实到读取和锁定查询。需要分配变更时，先作scope内非锁预读并释放连接，再用普通应用Bearer调用平台成员HTTP；BEGIN／FOR UPDATE后复核组织、version和oldAssignee，错配409。外部HTTP不持业务连接或行锁，锁内复核授权期限和成员校验窗口。
 
 ## 1. 管理员登记与授权
 
-先按[管理员操作手册](deploy/README.md)创建机密客户端、登记 `work-orders` 应用和七个入口／操作菜单。`work-orders-client` 是客户端名称；平台生成的实际 ID 配置为业务服务的 `PLATFORM_CLIENT_ID`。
+先按[管理员操作手册](backend/deploy/README.md)创建机密客户端、登记 `work-orders` 应用和七个入口／操作菜单。`work-orders-client` 是客户端名称；平台生成的实际 ID 配置为业务服务的 `PLATFORM_CLIENT_ID`。
 
 七个节点保留稳定 key：根 MENU、隐藏的 `ticket:read` 详情 MENU `/micro/work-orders/tickets/:id`、可见的 `ticket:create` 创建 MENU `/micro/work-orders/ticket-create`，以及四个操作 BUTTON。入口授权逐路径明确，父入口和详情读权限不会放行创建路径，数据 grant 仍独立配置。已有旧 BUTTON 形状会由工具拒绝并要求人工核对；新菜单形状须与采用新路径的前端版本一起更新，不能回滚到将 `/tickets/new` 当作创建的旧前端。
 
-租户、组织、角色、用户和当前直接 membership 的数据 grant 必须逐项明确。Bootstrap 不默认分配业务授权或标记 TRUSTED。Rust CLI 的离线授权计划列出正式数据 grant API 的 GET／preview／PATCH 顺序，显式 grants-apply --apply 读取目标实时版本并通过独立 read/write 权限和平台显式 `DATA_GRANT_POLICY` 检查；旧 Node 管理入口与 SQL 草案输出已退役。已有角色菜单和用户集合的管理 API 是全量替换，提交前仍需读取当前完整集合。成员维护对保留项采用差量写入，保持 membership UUID；实际删除/重建会级联删除旧成员的数据 grants，不能沿用旧目标快照。操作步骤见[管理员指南](deploy/README.md#3-明确租户组织角色成员和数据范围)。
+租户、组织、角色、用户和当前直接 membership 的数据 grant 必须逐项明确。Bootstrap 不默认分配业务授权或标记 TRUSTED。Rust CLI 的离线授权计划列出正式数据 grant API 的 GET／preview／PATCH 顺序，显式 grants-apply --apply 读取目标实时版本并通过独立 read/write 权限和平台显式 `DATA_GRANT_POLICY` 检查；旧 Node 管理入口与 SQL 草案输出已退役。已有角色菜单和用户集合的管理 API 是全量替换，提交前仍需读取当前完整集合。成员维护对保留项采用差量写入，保持 membership UUID；实际删除/重建会级联删除旧成员的数据 grants，不能沿用旧目标快照。操作步骤见[管理员指南](backend/deploy/README.md#3-明确租户组织角色成员和数据范围)。
 
 ## 2. 独立业务 API 和数据库
 
@@ -92,19 +92,19 @@ Opaque iframe 的业务请求携带字面 `Origin:null` 和短期应用 Bearer�
 
 v1同域静态版本可用`/work-orders-api`；v2从批准的外部静态origin直载时，构建明确设置平台绝对HTTPS API base或该origin自有的受控代理。opaque iframe仍发送Origin:null和应用Bearer，省略Cookie，宿主白名单保持真实公开HTTPS origin。GitHub候选、受保护手工publication与Linux部署分别执行，实际registry／目标地址／凭据由操作者提供；源码工作流不表示已远端执行。两版本静态容器／路由须同时保留以服务旧chunk，前端回滚不回滚Rust API或数据库。完整步骤见[业务镜像交付](../rust-saas/deploy/microapps/README.md)。
 
-前端独立锁定Vue3.5.43／Vite8.3.4，标准 `index.html` → `src/main.mjs` → 动态业务模块，不依赖window.Vue、root node_modules或 `frontend/public/sub-apps`。`base:'./'` 保持整个版本目录内相对入口／chunk／CSS，登记SDK1.0.0的classic bridge按原字节输出。明确配置实际宿主origin，并使用新版本号生成新构建：
+前端独立锁定Vue3.5.43／Vite8.3.4，标准 `index.html` → `src/main.mjs` → 动态业务模块，不依赖window.Vue、root node_modules或 `frontend/public/sub-apps`。`base:'../../'` 保持整个版本目录内相对入口／chunk／CSS，登记SDK1.0.0的classic bridge按原字节输出。明确配置实际宿主origin，并使用新版本号生成新构建：
 
 ```powershell
 cd frontend
 npm ci --ignore-scripts
 npm run build -- --version 1.0.0 --allowed-host-origin https://saas.example.com --api-base /work-orders-api
 cd ../../..
-node scripts/package-microapp.mjs --app work-orders --environment production --version 1.0.0 --input frontend/dist
+node backend/scripts/package-microapp.mjs --app work-orders --environment production --version 1.0.0 --input frontend/dist
 ```
 
 `asset-manifest.json`记录实际入口／动态chunk／CSS，`build-info.json`记录应用／SDK／Vue／Vite／Node版本、独立lock摘要及逐文件source摘要。公开配置不自动注入VITE_*、secret、DB URL或平台session。生产Nginx需为ESM、动态chunk、classic bridge和CSS提供正确MIME与匿名CORS，缺资源真实404；dev／preview仅是本地工具，不能作为生产服务。详见 [前端README](frontend/README.md)。
 
-上述打包器是保留的静态目录／ZIP兼容路线，生成 `deploy/micro-apps/work-orders/versions/1.0.0/` 和该版本的 `release.json`。将此完整目录放到只读版本根目录后，按管理员手册分别执行 register、preflight 和 activate。登记只得到 DRAFT；工具不自动激活、不改变trust或授权。发布新版本时重新构建并使用新版本目录；已有版本不可覆盖。
+上述打包器是保留的静态目录／ZIP兼容路线，生成 `backend/deploy/micro-apps/work-orders/versions/1.0.0/` 和该版本的 `release.json`。将此完整目录放到只读版本根目录后，按管理员手册分别执行 register、preflight 和 activate。登记只得到 DRAFT；工具不自动激活、不改变trust或授权。发布新版本时重新构建并使用新版本目录；已有版本不可覆盖。
 
 回滚使用平台部署的上一版本指针并重新预检。保留旧版本与注册清单，归档／删除只按批准的保留方案由管理员明确执行；本应用没有自动清理版本或软删除工单的作业。工单前端版本变化不重建宿主、不迁移业务数据，也不改变应用身份、OAuth客户端和授权。旧前端缺少创建header／恢复协议，不能当作当前Rust契约的等价回退；回退前核对在途写入、提醒和内存事件，不能通过删receipt／intent绕过。
 
@@ -121,9 +121,9 @@ node scripts/package-microapp.mjs --app work-orders --environment production --v
 
 库接管历史见 [Phase16](../../docs/validation/phase-16.md)，读取／CSV见 [Phase17](../../docs/validation/phase-17.md)，写入／幂等／0002及恢复见 [Phase18](../../docs/validation/phase-18.md)，成员策略／目录／分配与TTL竞态见 [Phase19](../../docs/validation/phase-19.md)，提醒／0003 intent与真实平台收件箱见 [Phase20](../../docs/validation/phase-20.md)。Phase21的独立Vite、opaque模块／chunk、当前Rust UI与未知结果浏览器证据由 [Phase21](../../docs/validation/phase-21.md)单独记录。PG默认ignored、VM／HTTP构建测试、真实浏览器与真实平台联合各自报告，未运行或默认跳过不能算通过，也不以旧Node联合替代Rust验收。
 
-后端真实 PostgreSQL/HTTP 测试、前端实际浏览器测试、管理工具安全测试与实际平台联合 E2E 分别报告其覆盖范围。根目录 `tests/micro-release-gateways.mjs` 使用真实 Linux Docker/Nginx、正常验证的本地 HTTPS 和独立 Rust transport fixture，覆盖静态版本、API 前缀／正文／查询／404、polling 形态请求和 WebSocket Upgrade。该 fixture 不实现完整 Engine.IO/Socket.IO，也不提供真实工单业务或平台授权；Phase 3 传输验收不能替代 Phase 22 协议兼容和实际业务联合验收。
+后端真实 PostgreSQL/HTTP 测试、前端实际浏览器测试、管理工具安全测试与实际平台联合 E2E 分别报告其覆盖范围。根目录 `backend/acceptance/micro-release-gateways.mjs` 使用真实 Linux Docker/Nginx、正常验证的本地 HTTPS 和独立 Rust transport fixture，覆盖静态版本、API 前缀／正文／查询／404、polling 形态请求和 WebSocket Upgrade。该 fixture 不实现完整 Engine.IO/Socket.IO，也不提供真实工单业务或平台授权；Phase 3 传输验收不能替代 Phase 22 协议兼容和实际业务联合验收。
 
-实际平台联合测试位于 `tests/platform-e2e.mjs`，显式提供最新平台 main、预先构建的 Rust 管理 CLI、隔离测试数据库连接、Nginx、生产宿主构建和现有 Playwright/Chromium 后运行。测试创建两座随机自有数据库，使用实际平台迁移与登录、业务迁移与 CRUD、通知 PostgreSQL 与 Socket.IO，再由实际 Vue iframe 验证操作和 v1→v2→回滚；测试只关闭／删除本次创建的资源。缺少显式运行配置时明确跳过；已配置但路径无效或运行失败则报告失败。测试不会自动构建 CLI，也没有旧 Node 管理入口回退。
+实际平台联合测试位于 `backend/acceptance/platform-e2e.mjs`，显式提供最新平台 main、预先构建的 Rust 管理 CLI、隔离测试数据库连接、Nginx、生产宿主构建和现有 Playwright/Chromium 后运行。测试创建两座随机自有数据库，使用实际平台迁移与登录、业务迁移与 CRUD、通知 PostgreSQL 与 Socket.IO，再由实际 Vue iframe 验证操作和 v1→v2→回滚；测试只关闭／删除本次创建的资源。缺少显式运行配置时明确跳过；已配置但路径无效或运行失败则报告失败。测试不会自动构建 CLI，也没有旧 Node 管理入口回退。
 
 联合测试在 Linux Node 24 下运行，所有服务进程与浏览器使用同一系统的可执行文件，便于严格跟踪自有 PID。先准备当前宿主的 `frontend/dist`、工单前后端依赖和本机运行时，再从仓库根目录执行：
 
@@ -135,7 +135,7 @@ export WORK_ORDERS_E2E_HOST_DIST=/absolute/path/to/frontend/dist
 export NGINX_BIN=/absolute/path/to/nginx
 export PLAYWRIGHT_MODULE=/absolute/path/to/node_modules/playwright
 export BROWSER_EXECUTABLE=/absolute/path/to/chromium
-node --env-file=.env.test --test tests/platform-e2e.mjs
+node --env-file=.env.test --test backend/acceptance/platform-e2e.mjs
 ```
 
 `PLATFORM_ADMIN_BIN` 必须为当前构建产物的绝对路径，`PHASE25_CLI_BIN` 可作同义输入。CLI 仅从子进程环境接收本次 fixture 的 Bearer，不放入 argv。开发使用明确允许的 IPv6 回环 HTTP；生产 HTTPS 保持证书与主机名验证，可通过 `PLATFORM_CA_FILE` 显式提供公开 PEM CA 链。此受管测试会将生产 fixture 的 `PRODUCTION_CA_FILE`（或其 `NODE_EXTRA_CA_CERTS`）显式映射为 CLI 的 `PLATFORM_CA_FILE`；CLI 自身不读取 Node 配置，也不接收私钥。

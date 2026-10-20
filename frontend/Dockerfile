@@ -1,14 +1,14 @@
 # syntax=docker/dockerfile:1
-# Build from the repository root. The driver validates APP_CODE before build.
+# Build from the frontend directory. The driver validates APP_CODE before build.
 ARG NODE_IMAGE=node:24.18.0-alpine
 ARG STATIC_IMAGE=nginxinc/nginx-unprivileged:1.28.0-alpine
 FROM ${NODE_IMAGE} AS build
 ARG APP_CODE
 WORKDIR /app
 RUN npm install --global npm@11.16.0
-COPY frontend/package.json frontend/package-lock.json ./
+COPY package.json package-lock.json ./
 RUN npm ci --ignore-scripts --no-audit --no-fund
-COPY frontend/ ./
+COPY . ./
 COPY deploy/render-static.mjs deploy/build-static.mjs deploy/gateway-policy.mjs /tools/microapps/
 ARG APP_VERSION
 ARG HOST_ORIGIN

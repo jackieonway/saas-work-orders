@@ -1,3 +1,20 @@
+# 工单后端
+
+所有命令在本 backend 目录执行。Rust 1.97.0，由 rust-toolchain.toml 固定；所有本地 Cargo 路径依赖均位于本目录内。
+
+```powershell
+cargo check --locked --all-targets
+cargo build --release --locked
+cargo run --locked
+docker build -t saas-work-orders-api:local .
+```
+
+运行前配置实际数据库及服务身份。业务服务的必需环境变量见下方原有配置说明；配置文件不会自动成为进程环境。
+
+后端相关部署文件位于 deploy/，补充文档位于 docs/，验收工具位于 scripts/ 和 acceptance/。固定指标协议库位于 vendor/。
+
+---
+
 # 工单业务 API
 
 当前服务入口统一为独立 Rust API，包含授权、读写/CSV、创建幂等、成员预校验和持久提醒恢复。Phase34已退役Node index，npm start分派锁定的Cargo命令；Node模块只作为CORS、历史协议及迁移兼容测试参考。构建与运行配置见[Rust工单说明](../../rust-saas/docs/work-orders-rust-baseline.md)和[独立交付](../../rust-saas/docs/independent-business-delivery.md)，实际验收见[Phase34](../../rust-saas/docs/validation/phase-34.md)。
@@ -107,6 +124,6 @@ CSV 包含人类可读编号、组织和人员名称，状态与优先级使用�
 
 ## 测试
 
-`npm test` 包括配置与真实 HTTP/独立 PostgreSQL 验收。真实业务数据库测试读取 `TEST_DATABASE_URL`，只创建并删除自身 UUID 随机库。平台 HTTP fixture 用于精确负向协议测试；完整平台 main、独立平台/业务数据库、真实登录、Socket.IO 和 iframe 联合测试位于上一级 `tests/platform-e2e.mjs`。
+`npm test` 包括配置与真实 HTTP/独立 PostgreSQL 验收。真实业务数据库测试读取 `TEST_DATABASE_URL`，只创建并删除自身 UUID 随机库。平台 HTTP fixture 用于精确负向协议测试；完整平台 main、独立平台/业务数据库、真实登录、Socket.IO 和 iframe 联合测试位于上一级 `backend/acceptance/platform-e2e.mjs`。
 
 Phase 30 授权链、受控成员协议、分页上限、预算参数与显式 legacy 回滚见[应用授权协议](../../rust-saas/docs/application-authorization-contract.md)。

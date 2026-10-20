@@ -1,13 +1,13 @@
-# Build from repository root; the only shared input is the pure telemetry crate.
+# Build from backend directory; the only shared input is the pure telemetry crate.
 ARG RUST_IMAGE=rust:1.97.0-slim-bookworm
 ARG RUNTIME_IMAGE=debian:bookworm-slim
 FROM ${RUST_IMAGE} AS build
 WORKDIR /app/backend
 ARG CARGO_BUILD_JOBS=2
-COPY backend/Cargo.toml backend/Cargo.lock ./
-COPY backend/src ./src
-COPY backend/migrations ./migrations
-COPY vendor/operational-telemetry /app/vendor/operational-telemetry
+COPY Cargo.toml Cargo.lock ./
+COPY src ./src
+COPY migrations ./migrations
+COPY vendor/operational-telemetry ./vendor/operational-telemetry
 RUN cargo build --release --locked --bin work-orders-api
 
 FROM ${RUNTIME_IMAGE}

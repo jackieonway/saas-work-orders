@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
-const root = new URL('../', import.meta.url)
-const lock = JSON.parse(readFileSync(new URL('dependencies.lock.json', root)))
+const root = new URL('../../', import.meta.url)
+const lock = JSON.parse(readFileSync(new URL('backend/dependencies.lock.json', root)))
 for (const [file, expected] of Object.entries(lock.files)) {
   if (file.startsWith('/') || file.split('/').includes('..')) throw new Error('Unsafe dependency path')
   const actual = createHash('sha256').update(readFileSync(new URL(file, root))).digest('hex')

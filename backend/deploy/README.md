@@ -11,7 +11,7 @@ Phase28 推荐镜像路径现由[业务镜像交付说明](../../rust-saas/deplo
 下面仅解析配置，不启动服务；两个环境文件都必须位于受控位置并填完相应占位值：
 
 ```sh
-docker compose --env-file /secure/platform.env --env-file /secure/platform-legacy.env -f docker-compose.yml -f deploy/compose.legacy.yml --profile legacy config --quiet
+docker compose --env-file /secure/platform.env --env-file /secure/platform-legacy.env -f docker-compose.yml -f backend/deploy/compose.legacy.yml --profile legacy config --quiet
 ```
 
 只有独立 Nginx 发布 HTTPS 入口。现有 `/work-orders-api` 原前缀转发到私网 `work-orders-api:3004`；该 legacy override 只保留工单兼容 API，不表示 Rust 工单（Phase 16–20）已切流。通知已由 Phase 23 的[独立 Rust Compose](../../rust-saas/deploy/compose.notification.yml)提供，`/socket.io/` 转发到私网 `notification-ws:3003`。通知健康探针需要通过公开 HTTPS 平台验证保护路由，入口不能反向等待通知就绪而形成启动死锁；旧通知容器需按原部署清单精确停止，详见[通知切流说明](../../rust-saas/mini-services/notification-ws/README.md)。
@@ -201,7 +201,7 @@ POST/PATCH 使用同一 body 形状：
 
 ## 4. 发布工单前端版本
 
-Phase21前端使用本目录之外 `../frontend/` 的独立Vue3.5.43／Vite8.3.4锁依赖；Node24.18.0／npm11.16.0只参与构建／验证，生产只运行静态Nginx。先从仓库根执行独立安装及标准Vite构建，实际宿主origin由部署方明确提供：
+Phase21前端使用本目录之外 `../../frontend/` 的独立Vue3.5.43／Vite8.3.4锁依赖；Node24.18.0／npm11.16.0只参与构建／验证，生产只运行静态Nginx。先从仓库根执行独立安装及标准Vite构建，实际宿主origin由部署方明确提供：
 
 ```powershell
 npm --prefix frontend ci --ignore-scripts
@@ -213,18 +213,18 @@ npm --prefix frontend run build -- --version 1.0.0 --allowed-host-origin https:/
 前端复用仓库打包器、不重建宿主。下面的 `--input` 指向实际完整构建产物，发布目录由管理员作为不可变静态归档部署：
 
 ```powershell
-node scripts/package-microapp.mjs --app work-orders --environment production --version 1.0.0 --input path/to/work-orders-dist
+node backend/scripts/package-microapp.mjs --app work-orders --environment production --version 1.0.0 --input path/to/work-orders-dist
 ```
 
-默认生成 `deploy/micro-apps/work-orders/versions/1.0.0/` 和其中的 `release.json`，入口为 `/sub-apps/work-orders/versions/1.0.0/index.html`。已有版本目录不能覆盖，变更使用新版本号；不要发布 `.env`、secret、source token 或其它敏感文件。
+默认生成 `backend/deploy/micro-apps/work-orders/versions/1.0.0/` 和其中的 `release.json`，入口为 `/sub-apps/work-orders/versions/1.0.0/index.html`。已有版本目录不能覆盖，变更使用新版本号；不要发布 `.env`、secret、source token 或其它敏感文件。
 
 将整个版本目录复制到网关对应不可变目录并保留旧版本／chunk。opaque iframe匿名加载ESM、动态chunk、classic bridge和CSS，需要正确MIME和静态 `Access-Control-Allow-Origin:*` 或null；不存在资源必须真实404，不回落入口HTML。入口CSP frame-ancestors／X-Frame-Options须允许宿主，iframe不增加allow-same-origin或下载权限。静态匿名CORS不扩展到业务API：工单请求保持Origin:null、当前应用Bearer、credentials:omit，由Rust生成精确业务CORS，Nginx透传。平台代理预检使用服务器精确origin allowlist，CLI配置不能扩大它，见 [独立发布API](../../rust-saas/docs/architecture.md#release-contract)。
 
 每一步都是独立命令：
 
 ```powershell
-saas-platform-admin register --environment production --release-file deploy/micro-apps/work-orders/versions/1.0.0/release.json
-saas-platform-admin register --environment production --release-file deploy/micro-apps/work-orders/versions/1.0.0/release.json --apply
+saas-platform-admin register --environment production --release-file backend/deploy/micro-apps/work-orders/versions/1.0.0/release.json
+saas-platform-admin register --environment production --release-file backend/deploy/micro-apps/work-orders/versions/1.0.0/release.json --apply
 saas-platform-admin releases --environment production
 saas-platform-admin preflight --environment production --release-id <发布UUID> --apply
 saas-platform-admin activate --environment production --release-id <发布UUID> --apply

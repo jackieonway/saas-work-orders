@@ -1,4 +1,9 @@
-node_modules
-tests
-.env*
-*.log
+target
+**/target
+**/node_modules
+**/.env*
+**/*.pem
+**/*.key
+**/*.log
+.integration
+docs

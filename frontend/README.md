@@ -1,3 +1,25 @@
+# 工单前端
+
+所有命令在本 frontend 目录执行。Node 24.18.0、npm 11.16.0。构建不读取 backend 或仓库根的脚本与依赖。
+
+```powershell
+npm ci
+npm run dev
+npm run build -- --allowed-host-origin https://platform.example.com
+```
+
+将 origin 替换为实际平台地址；完整业务联调需要已登记的平台应用、权限和独立业务 API。
+
+Docker 构建上下文为本目录：
+
+```powershell
+docker build -t saas-work-orders-web:local .
+```
+
+镜像构建需要提供 APP_CODE、APP_VERSION、HOST_ORIGIN 和 API_BASE 等公开构建参数，见 Dockerfile。
+
+---
+
 # 独立工单前端
 
 Vue 3.5.43 业务应用，应用编码为 `work-orders`。运行在默认 opaque iframe 中，接收 MicroProps 2.0，通过真实 `/work-orders-api` 完成工单操作。没有浏览器模拟数据、平台 session 存储或客户端密钥。
@@ -20,13 +42,13 @@ npm run build -- --version 1.0.0 --allowed-host-origin https://platform.example.
 
 开发可在设置 `WORK_ORDERS_ALLOWED_HOST_ORIGINS` 后执行 `npm run dev`；`npm run preview` 只用于本地检查已构建产物。生产通过静态 Nginx 提供整个版本目录，Node/Vite 不参与生产请求。Nginx 必须对模块、动态 chunk、CSS 和 classic bridge 提供正确 MIME 及匿名 CORS，缺失资源返回真实 404，不得用入口 HTML 吞掉错误。opaque iframe 不增加 `allow-same-origin` 或下载权限。
 
-产物可通过平台管理页面上传 ZIP/tar.gz，或在仓库根目录使用 `scripts/package-microapp.mjs` 生成不可覆盖版本目录和登记清单。命令行打包不会自动登记、预检或激活：
+产物可通过平台管理页面上传 ZIP/tar.gz，或在仓库根目录使用 `backend/scripts/package-microapp.mjs` 生成不可覆盖版本目录和登记清单。命令行打包不会自动登记、预检或激活：
 
 ```sh
-node scripts/package-microapp.mjs --app work-orders --environment development --version 1.0.0 --input frontend/dist
+node backend/scripts/package-microapp.mjs --app work-orders --environment development --version 1.0.0 --input frontend/dist
 ```
 
-登记 SDK **1.0.0** 的 `iframe-bridge.js` 与 `micro-sdk.mjs` 固定在 `vendor/`。构建按原字节输出 classic iframe bridge，业务客户端引用同版的模块 SDK；Vue来自锁定的模块依赖，不复制旧 `vue.global.prod.js`。Vue MIT 许可包含在产物中。ESM 与动态 chunk 必须在真实 opaque iframe 中验收匿名 CORS。SDK 升级时应核对共享契约并重新登记前端版本。
+登记 SDK **1.0.0** 的 `iframe-bridge.js` 与 `micro-sdk.mjs` 固定在 `backend/vendor/`。构建按原字节输出 classic iframe bridge，业务客户端引用同版的模块 SDK；Vue来自锁定的模块依赖，不复制旧 `vue.global.prod.js`。Vue MIT 许可包含在产物中。ESM 与动态 chunk 必须在真实 opaque iframe 中验收匿名 CORS。SDK 升级时应核对共享契约并重新登记前端版本。
 
 ## 业务操作
 
@@ -67,8 +89,8 @@ Phase21真实浏览器入口为 `../../rust-saas/tests/phase21-work-orders-brows
 
 ## 版本化 SDK
 
-`vendor/iframe-bridge.js` 与 `vendor/micro-sdk.mjs` 来自同一个登记 SDK **1.0.0**，保持 context 1.0、MicroProps/iframe 2.0。`WorkOrdersClient` 保留工单列表/写入/提醒/CSV 方法、401 立即清空视图以及迟到响应拒绝规则，通用 HTTP 传输复用该版本的 `requestWithContext`。构建元数据包含 `sdkVersion`。
+`backend/vendor/iframe-bridge.js` 与 `backend/vendor/micro-sdk.mjs` 来自同一个登记 SDK **1.0.0**，保持 context 1.0、MicroProps/iframe 2.0。`WorkOrdersClient` 保留工单列表/写入/提醒/CSV 方法、401 立即清空视图以及迟到响应拒绝规则，通用 HTTP 传输复用该版本的 `requestWithContext`。构建元数据包含 `sdkVersion`。
 
 JSON 与 CSV 都按流限制为 4 MiB，CSV 保留 UTF-8 BOM；请求强制省略 cookies，传入当前应用 Bearer 与 UUID `X-Request-Id`。独立业务 API 的 CORS 必须显式允许请求 `X-Request-Id` 并暴露响应 `X-Request-Id`，参考后端已支持；保持精确 origin 且不开放 credentials。`BusinessError` 继续提供工单 UI 使用的 status/code，并增加 kind/requestId，区分认证、禁止、冲突、网络及协议错误；错误不展示远端响应文本。工单特有的组织硬上限、功能权限与独立 grant 仍由 domain 和业务后端执行。
 
-vendor 是生成产物，请在仓库根执行 `npm run sdk:sync` 更新、执行 `npm run sdk:check` 验证；不要手改 vendor 或独立复制一份桥。源码独立构建所需的 SDK 文件已经随 vendor 提交，不依赖宿主运行时的 node_modules 或平台 storage。新 SDK 必须随新的不可变工单前端版本登记，旧发布目录保留以支持激活和回滚。完整支持能力和兼容策略见 [SDK 接入说明](../../rust-saas/examples/micro-app-sdk/README.md)。
+backend/vendor 是生成产物，请在仓库根执行 `npm run sdk:sync` 更新、执行 `npm run sdk:check` 验证；不要手改 backend/vendor 或独立复制一份桥。源码独立构建所需的 SDK 文件已经随 backend/vendor 提交，不依赖宿主运行时的 node_modules 或平台 storage。新 SDK 必须随新的不可变工单前端版本登记，旧发布目录保留以支持激活和回滚。完整支持能力和兼容策略见 [SDK 接入说明](../../rust-saas/examples/micro-app-sdk/README.md)。
