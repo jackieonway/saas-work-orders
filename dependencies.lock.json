@@ -7,15 +7,15 @@
     "vendor/operational-telemetry/Cargo.lock": "2e3b612bc2ba42434b7ddbc32446442657356364a6083b951a3c5f16ae4cdf9a",
     "vendor/operational-telemetry/Cargo.toml": "9f3b14ff00778e84b66b085ba9aa1b56f97b742f68c6c5a00ef15cf9722b5818",
     "vendor/operational-telemetry/src/lib.rs": "ae4fa26581d616e9301a5ed167dcea1a56c50a224e29a6c068a4248b7ec3900c",
-    "frontend/vendor/iframe-bridge.js": "27b3f3a6c22e9c3d7d773d8340e1a3c0374383b144ebb49f4712e5fc89f529e8",
-    "frontend/vendor/micro-sdk.mjs": "f90dd916ec772d59c9e8e5c44886139a212dd00cb06dbea611d23dd0fce581ec",
-    "frontend/vendor/vue.global.prod.js": "7aeb18b37495d35347ac33a0c9e25cdea7b26b5342c40de3c9e59fdc72e1fa1e",
-    "frontend/vendor/vue.LICENSE.txt": "7247a5c14fb2946b4f932587899752850a59a6a717a660dee313c3ba695c4dfb",
-    "deploy/bootstrap.manifest.json": "3cb493cdfc0699aef156a65faa9d7d4d5a554fc46de098908e310265b62c68cd",
+    "frontend/vendor/iframe-bridge.js": "16434ed209846c1e41f3d74f22654027289e44caf26e4d77fe1aeb0146b03ee5",
+    "frontend/vendor/micro-sdk.mjs": "2365b2c6cf6be201d930ae6ca1010bd59ce3f7fa4ab6a0df965189529f43c837",
+    "frontend/vendor/vue.global.prod.js": "b72394052eef1eeda1752db3758ce1be6f88016903f22e5241cc732ea307478e",
+    "frontend/vendor/vue.LICENSE.txt": "ea4239d56944b8a5881124cf2804b95ba2bf2cb98029623b1858722bbc5b0e3e",
+    "deploy/bootstrap.manifest.json": "66ab88154f7d7f1a364420550076085b2a3d43967c013bd27719b382ee21c91c",
     "deploy/build-static.mjs": "ed18e010960ccd64a655665f29405a0ae6fb89ef9fdda33bab18aff7e6355503",
-    "deploy/compose.env.example": "4c30ec429bb2673b9f56ad3fba8f0c7d93d945e847675f558df102226107d9a7",
+    "deploy/compose.env.example": "1b702b9ba3f922faadf1b842aa836f0df45cf44b749eb59a4f01a625c119ebce",
     "deploy/gateway-policy.mjs": "3fdd1d69f7898706f34a5faadfc22e6356a57fc8ddabcf5d505ea6729d00c5cc",
-    "deploy/grants.manifest.example.json": "347835eb805ab28b1b348b58abbd6e884c2ba9d2a24fec56bb62adead604b1d5",
+    "deploy/grants.manifest.example.json": "d281fa3a0cc107eb51e33e56fda0c8f2b101c9c6c89a76db15dde89bda6d2e63",
     "deploy/render-static.mjs": "226f7a44df10c8f164ac6a0bd4ac684ee0e50795ad51b77081ad86c2402231ae"
   }
 }
