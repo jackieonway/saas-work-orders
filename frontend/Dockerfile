@@ -6,7 +6,7 @@ FROM ${NODE_IMAGE} AS build
 ARG APP_CODE
 WORKDIR /app
 RUN npm install --global npm@11.16.0
-COPY frontend/package.json business-apps/${APP_CODE}/frontend/package-lock.json ./
+COPY frontend/package.json frontend/package-lock.json ./
 RUN npm ci --ignore-scripts --no-audit --no-fund
 COPY frontend/ ./
 COPY deploy/render-static.mjs deploy/build-static.mjs deploy/gateway-policy.mjs /tools/microapps/
