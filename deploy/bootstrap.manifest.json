@@ -25,8 +25,8 @@
   },
   "menus": [
     {"key":"root","parentKey":null,"type":"MENU","title":"工单管理","path":"/micro/work-orders","permission":"","sortOrder":0,"visible":true,"linkTarget":"MICRO"},
-    {"key":"ticket:read","parentKey":"root","type":"BUTTON","title":"读取工单","path":"","permission":"ticket:read","sortOrder":1,"visible":false,"linkTarget":"BLANK"},
-    {"key":"ticket:create","parentKey":"root","type":"BUTTON","title":"创建工单","path":"","permission":"ticket:create","sortOrder":2,"visible":false,"linkTarget":"BLANK"},
+    {"key":"ticket:read","parentKey":"root","type":"MENU","title":"工单详情","path":"/micro/work-orders/tickets/:id","permission":"ticket:read","sortOrder":1,"visible":false,"linkTarget":"MICRO"},
+    {"key":"ticket:create","parentKey":"root","type":"MENU","title":"创建工单","path":"/micro/work-orders/ticket-create","permission":"ticket:create","sortOrder":2,"visible":true,"linkTarget":"MICRO"},
     {"key":"ticket:update","parentKey":"root","type":"BUTTON","title":"更新工单","path":"","permission":"ticket:update","sortOrder":3,"visible":false,"linkTarget":"BLANK"},
     {"key":"ticket:delete","parentKey":"root","type":"BUTTON","title":"删除工单","path":"","permission":"ticket:delete","sortOrder":4,"visible":false,"linkTarget":"BLANK"},
     {"key":"ticket:export","parentKey":"root","type":"BUTTON","title":"导出工单","path":"","permission":"ticket:export","sortOrder":5,"visible":false,"linkTarget":"BLANK"},

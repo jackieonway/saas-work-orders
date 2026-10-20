@@ -348,14 +348,15 @@ export function createServer({ config, pool, fetchImpl = fetch, logger = console
       if (!config.allowedOrigins.includes(origin)) return json(response, 403, { code: 'ORIGIN_DENIED', message: '来源未获允许' })
       response.setHeader('access-control-allow-origin', origin)
       response.setHeader('vary', 'Origin')
+      response.setHeader('access-control-expose-headers', 'X-Request-Id')
     }
     if (request.method === 'OPTIONS') {
       const method = request.headers['access-control-request-method']
       const headers = (request.headers['access-control-request-headers'] ?? '').split(',').map((value) => value.trim().toLowerCase()).filter(Boolean)
-      if (!origin || !['GET', 'POST', 'PATCH', 'DELETE'].includes(method) || headers.some((value) => !['authorization', 'content-type'].includes(value))) {
+      if (!origin || !['GET', 'POST', 'PATCH', 'DELETE'].includes(method) || headers.some((value) => !['authorization', 'content-type', 'x-request-id'].includes(value))) {
         return json(response, 403, { code: 'ORIGIN_DENIED', message: '预检请求未获允许' })
       }
-      response.writeHead(204, { 'access-control-allow-methods': 'GET, POST, PATCH, DELETE, OPTIONS', 'access-control-allow-headers': 'Authorization, Content-Type' })
+      response.writeHead(204, { 'access-control-allow-methods': 'GET, POST, PATCH, DELETE, OPTIONS', 'access-control-allow-headers': 'Authorization, Content-Type, X-Request-Id' })
       return response.end()
     }
     dispatch(request, response, config, pool, tracedFetch, abort.signal, metadata, health).catch((error) => {

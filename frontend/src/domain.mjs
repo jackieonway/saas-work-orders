@@ -1,5 +1,6 @@
 export const APP_CODE = 'work-orders'
 export const MAX_BYTES = 4 * 1024 * 1024
+export const validIdempotencyKey = value => typeof value === 'string' && /^[A-Za-z0-9._:-]{1,128}$/.test(value)
 export const STATUSES = { OPEN: '待处理', IN_PROGRESS: '处理中', RESOLVED: '已解决' }
 export const PRIORITIES = { LOW: '低', NORMAL: '普通', HIGH: '高' }
 export const SCOPE_LABELS = { SELF: '我创建的工单', ORG: '当前组织', ORG_SUBTREE: '当前组织及下级组织', TENANT: '当前租户' }
@@ -77,8 +78,8 @@ export function visibleScope(props, action = 'read') {
 
 export function routeView(routePath = '') {
   const base = '/micro/' + APP_CODE
-  const relative = routePath.startsWith(base) ? routePath.slice(base.length).replace(/\/$/, '') : ''
-  if (relative === '/tickets/new') return { kind: 'create' }
+  const relative = routePath === base || routePath.startsWith(base + '/') ? routePath.slice(base.length).replace(/\/$/, '') : ''
+  if (relative === '/ticket-create') return { kind: 'create' }
   const match = /^\/tickets\/([a-zA-Z0-9-]{1,128})$/.exec(relative)
   return match ? { kind: 'detail', id: match[1] } : { kind: 'list' }
 }

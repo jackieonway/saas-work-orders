@@ -3,10 +3,10 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "Independent PostgreSQL work order service with live platform application authorization",
+  "description": "Legacy compatibility test dependencies; the work-order service entry dispatches Rust",
   "engines": { "node": ">=24 <25" },
   "scripts": {
-    "start": "node index.mjs",
+    "start": "cargo run --locked --manifest-path Cargo.toml",
     "test": "node --test tests/*.test.mjs"
   },
   "dependencies": { "pg": "^8.16.3" }

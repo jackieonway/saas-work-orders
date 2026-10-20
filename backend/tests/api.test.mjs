@@ -616,10 +616,12 @@ test('real PG + HTTP platform fixture: protocol binding and upstream transport f
   await t.test('sandbox iframe origin is explicit and CORS does not substitute for token authentication', async () => {
     const before = actor.state.calls.introspect
     const preflight = await call(h.url, '', 'OPTIONS', API, undefined, { headers: {
-      origin: 'null', 'access-control-request-method': 'PATCH', 'access-control-request-headers': 'authorization,content-type',
+      origin: 'null', 'access-control-request-method': 'PATCH', 'access-control-request-headers': 'authorization,content-type,x-request-id',
     } })
     assert.equal(preflight.status, 204)
     assert.equal(preflight.headers.get('access-control-allow-origin'), 'null')
+    assert.match(preflight.headers.get('access-control-allow-headers'), /x-request-id/i)
+    assert.match(preflight.headers.get('access-control-expose-headers'), /x-request-id/i)
     assert.equal(preflight.headers.get('access-control-allow-credentials'), null)
     assert.equal(actor.state.calls.introspect, before, 'preflight attempted bearer-token authorization')
     const authenticated = await call(h.url, actor.token, 'GET', API, undefined, { headers: { origin: 'null' } })

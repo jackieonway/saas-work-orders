@@ -1,5 +1,5 @@
 // Opt-in Phase11 acceptance: actual Rust main, independent Node backend, two
-// owned PostgreSQL databases, actual notification service, Nginx and Chromium.
+// owned PostgreSQL databases, actual Rust notification service, Nginx and Chromium.
 // No JWT is minted here. SQL prepares platform identities and authorization;
 // every work order and every notification is created through the real APIs.
 import assert from 'node:assert/strict'
@@ -22,8 +22,12 @@ const TEMP_PREFIX = 'platform-work-orders-platform-e2e-'
 const platformAdminUrl = process.env.WORK_ORDERS_E2E_PLATFORM_DATABASE_URL ?? process.env.TEST_DATABASE_URL
 const businessAdminUrl = process.env.WORK_ORDERS_E2E_BUSINESS_DATABASE_URL ?? platformAdminUrl
 const binaryArgument = process.env.WORK_ORDERS_E2E_BACKEND_BINARY
+const notificationBinaryArgument = process.env.NOTIFICATION_E2E_SERVICE_BINARY
+const adminBinaryArgument = process.env.PLATFORM_ADMIN_BIN ?? process.env.PHASE25_CLI_BIN
 const requirements = {
   WORK_ORDERS_E2E_BACKEND_BINARY: binaryArgument,
+  NOTIFICATION_E2E_SERVICE_BINARY: notificationBinaryArgument,
+  PLATFORM_ADMIN_BIN: adminBinaryArgument,
   WORK_ORDERS_E2E_PLATFORM_DATABASE_URL: platformAdminUrl,
   NGINX_BIN: process.env.NGINX_BIN,
   WORK_ORDERS_E2E_HOST_DIST: process.env.WORK_ORDERS_E2E_HOST_DIST,
@@ -99,15 +103,58 @@ function processIdentity(pid) {
     return {pid:Number(pid),parentPid:Number(fields[1]),startTime:fields[19],exe:readlinkSync(`${directory}/exe`),cwd:readlinkSync(`${directory}/cwd`)}
   } catch { return null }
 }
+
+// Kept separate from the full fixture so the executable/env boundary can be
+// checked without starting the later work-order, monitoring or restore suites.
+export function resolveNotificationBinary(binary) {
+  assert.ok(typeof binary === 'string' && path.isAbsolute(binary), 'NOTIFICATION_E2E_SERVICE_BINARY must explicitly name an absolute prebuilt Rust executable')
+  const executable = realpathSync(binary)
+  const stat = lstatSync(executable)
+  assert.ok(stat.isFile(), 'NOTIFICATION_E2E_SERVICE_BINARY must be a regular executable file')
+  if (process.platform !== 'win32') assert.ok((stat.mode & 0o111) !== 0, 'NOTIFICATION_E2E_SERVICE_BINARY must be executable')
+  return executable
+}
+
+export function notificationLaunchOptions({ binary, environment, databaseUrl, platformOrigin, allowedOrigin, port, production, metricsToken, caFile }) {
+  const executable = resolveNotificationBinary(binary)
+  const env = Object.fromEntries(['PATH', 'Path', 'LANG', 'LC_ALL', 'LD_LIBRARY_PATH', 'LD_PRELOAD', 'SystemRoot', 'WINDIR', 'TEMP', 'TMP']
+    .filter((name) => environment[name] !== undefined).map((name) => [name, environment[name]]))
+  Object.assign(env, {
+    DATABASE_URL: databaseUrl, PLATFORM_API_BASE_URL: platformOrigin,
+    NOTIFICATION_ALLOWED_ORIGINS: allowedOrigin, NOTIFICATION_ENV: production ? 'production' : 'test',
+    NOTIFICATION_HOST: '::1', NOTIFICATION_PORT: String(port), NOTIFICATION_SHUTDOWN_ON_STDIN: '0',
+    NOTIFICATION_AUTH_RECHECK_MS: '1000', NOTIFICATION_HEALTH_PROBE_MS: production ? '1000' : '30000',
+    METRICS_TOKEN: metricsToken,
+  })
+  if (caFile) {
+    assert.ok(path.isAbsolute(caFile), 'The optional notification platform CA must use an absolute file path')
+    const certificate = realpathSync(caFile)
+    assert.ok(lstatSync(certificate).isFile(), 'The optional notification platform CA must be a regular file')
+    env.NOTIFICATION_PLATFORM_CA_FILE = certificate
+  }
+  return { executable, args: [], env }
+}
+
+// The registered application's ID is known only after the real bootstrap.
+// Assignment directory use remains an explicit fixture capability.
+export function workOrdersMemberPolicy(applicationId) {
+  assert.match(applicationId, /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i)
+  return JSON.stringify({ applications: [{ applicationId,
+    capabilities: ['create', 'update'].map(action => ({ resource: 'ticket', action, scopes: ['SELF', 'ORG', 'ORG_SUBTREE', 'TENANT'] })),
+    memberLookups: ['create', 'update'].map(action => ({ resource: 'ticket', action })),
+  }], managementScopes: [] })
+}
+
 export async function fixture(t) {
   assert.equal(process.platform, 'linux', 'Run the entire fixture in Linux so directly owned service PIDs are tracked')
+  const notificationExecutable = resolveNotificationBinary(notificationBinaryArgument)
   const { default: pg } = await import(pathToFileURL(dependencies.resolve('pg')).href)
   const { io: createClient } = dependencies('socket.io-client')
-  const { loadConfig } = await import('../../../mini-services/notification-ws/config.mjs')
-  const { createPostgresStore } = await import('../../../mini-services/notification-ws/postgres-store.mjs')
-  const { createNotificationService } = await import('../../../mini-services/notification-ws/service.mjs')
   const { chromium } = dependencies(path.resolve(process.env.PLAYWRIGHT_MODULE))
   const binary = realpathSync(path.resolve(binaryArgument))
+  assert.ok(path.isAbsolute(adminBinaryArgument), 'PLATFORM_ADMIN_BIN must explicitly name an absolute Rust CLI binary path')
+  const adminBinary = realpathSync(adminBinaryArgument)
+  assert.ok(lstatSync(adminBinary).isFile(), 'PLATFORM_ADMIN_BIN must be a prebuilt regular executable file')
   const nginx = realpathSync(path.resolve(process.env.NGINX_BIN))
   const browserExecutable = realpathSync(path.resolve(process.env.BROWSER_EXECUTABLE))
   const hostRoot = realpathSync(path.resolve(process.env.WORK_ORDERS_E2E_HOST_DIST))
@@ -126,7 +173,6 @@ export async function fixture(t) {
   const processes = []
   const sockets = []
   const databases = []
-  let notificationService
   let browser
   let browserIdentity
   let qaRoot,qaParent,debugDeadline
@@ -171,14 +217,13 @@ export async function fixture(t) {
   }
   t.after(async () => {
     const errors = []
-    let browserStopped = true, notificationStopped = true
+    let browserStopped = true
     for (const socket of sockets) socket.disconnect()
     try { await browser?.close() } catch { browserStopped = false; errors.push('owned browser stop failed') }
-    try { await notificationService?.stop() } catch { notificationStopped = false; errors.push('owned notification service stop failed') }
     for (const item of [...processes].reverse()) {
       try { await stop(item) } catch { errors.push(`owned ${item.label} stop failed`) }
     }
-    const allStopped = browserStopped && notificationStopped && processes.every((item) => item.closed)
+    const allStopped = browserStopped && processes.every((item) => item.closed)
     for (const item of databases) {
       try { await item.writer?.end() } catch { errors.push('owned database writer close failed') }
       try {
@@ -245,7 +290,7 @@ export async function fixture(t) {
   const platformDb = await createDatabase(platformAdminUrl, 'p')
   const businessDb = await createDatabase(businessAdminUrl, 'b')
   assert.notEqual(platformDb.name, businessDb.name)
-  const platformPort = await port(), businessPort = await port(), gatewayPort = await port(), notificationPort = production ? await port() : 0
+  const platformPort = await port(), businessPort = await port(), gatewayPort = await port(), notificationPort = await port()
   const platformInternalBase = `http://[::1]:${platformPort}`
   const businessBase = `http://[::1]:${businessPort}`
   const gatewayBase = `${production?'https':'http'}://[::1]:${gatewayPort}`
@@ -265,8 +310,9 @@ export async function fixture(t) {
       CORS_ALLOWED_ORIGINS:gatewayBase,TRUSTED_PROXY_IPS:'127.0.0.1,::1',MICRO_CA_CERT_FILE:process.env.PRODUCTION_CA_FILE,
       OAUTH_AUTO_PURGE:'false',OAUTH_INTROSPECTION_CLIENT_REQUESTS_PER_MINUTE:'600'}:{}),
     STATIC_DIR: '', SESSION_TTL_HOURS: '1', ACCESS_TOKEN_TTL_SECONDS: '300', RUST_LOG: 'warn',
+    DATA_GRANT_POLICY: JSON.stringify({ applications: [], managementScopes: [] }),
   }
-  const platform = launch('platform', binary, [], { env:platformEnvironment })
+  let platform = launch('platform', binary, [], { env:platformEnvironment })
   async function http(base, method, endpoint, token, body, { headers = {}, timeout = 10000 } = {}) {
     if (token) headers = { ...headers, Authorization: `Bearer ${token}` }
     if (body !== undefined) headers = { ...headers, 'Content-Type': 'application/json' }
@@ -307,10 +353,34 @@ export async function fixture(t) {
   }
   const seeded = await query(platformDb.writer, "SELECT m.organization_id FROM memberships m JOIN users u ON u.id=m.user_id WHERE u.username=$1 LIMIT 1",[adminUsername])
   const administrator = await login(adminUsername, seeded.rows[0].organization_id)
-  const { run: runAdmin } = await import('../deploy/platform-admin-core.mjs')
-  const adminEnvironment = { PLATFORM_API_ORIGIN: platformBase, PLATFORM_ADMIN_BEARER: administrator.session, PLATFORM_CLIENT_ID: 'work-orders-client' }
-  const adminCommand = (args) => runAdmin([...args, '--environment', production?'production':'development',...(production?[]:['--allow-loopback-http'])], adminEnvironment)
+  const adminCaFile = process.env.PLATFORM_CA_FILE ?? (production ? process.env.PRODUCTION_CA_FILE ?? runtimeEnvironment.NODE_EXTRA_CA_CERTS : undefined)
+  const adminEnvironment = { PLATFORM_API_ORIGIN: platformBase, PLATFORM_ADMIN_BEARER: administrator.session, PLATFORM_CLIENT_ID: 'work-orders-client',
+    ...(adminCaFile ? { PLATFORM_CA_FILE: adminCaFile } : {}) }
+  async function adminCommand(args) {
+    const item = launch('platform-admin', adminBinary,
+      [...args, '--environment', production?'production':'development', ...(production?[]:['--allow-loopback-http'])],
+      { env: adminEnvironment })
+    let deadline
+    try {
+      await Promise.race([item.exited, new Promise((resolve) => { deadline = setTimeout(resolve, 120000) })])
+      if (!item.closed) await stop(item)
+      assert.ok(item.closed && !item.error && item.child.exitCode === 0, 'prebuilt Rust platform admin command must succeed')
+      const output = item.stdout.join('')
+      assert.ok(Buffer.byteLength(output) <= 1024 * 1024, 'Rust admin output must fit the fixture response limit')
+      let result
+      try { result = JSON.parse(output) } catch { throw new Error('Rust platform admin returned an invalid JSON contract') }
+      assert.equal(result.ok, true, 'Rust admin command must return its safe success contract')
+      return result
+    } finally { clearTimeout(deadline) }
+  }
   const ids = await platformFixtures(platformDb.writer, clientSecret, adminCommand,adminUsername)
+  await stop(platform)
+  platformEnvironment.DATA_GRANT_POLICY = workOrdersMemberPolicy(ids.application)
+  platform = launch('platform', binary, [], { env:platformEnvironment })
+  await until(async () => {
+    assert.ok(!platform.error && !platform.closed, 'registered assignment policy platform exited before readiness')
+    try { return (await http(platformBase, 'GET', '/api/health', null, undefined, { timeout: 1000 })).status === 200 } catch { return false }
+  }, 'platform must restart with the explicit work-orders member lookup declaration', 60000)
   const inspect = await adminCommand(['inspect'])
   assert.equal(inspect.applicationId,ids.application); assert.equal(inspect.clientAssociated,true); assert.deepEqual(inspect.missingMenus,[])
   const repeatBootstrap = await adminCommand(['bootstrap','--apply'])
@@ -339,22 +409,19 @@ export async function fixture(t) {
   assert.equal((await query(businessDb.writer, "SELECT to_regclass('work_orders')::text AS name")).rows[0].name, 'work_orders')
   assert.equal((await query(businessDb.writer, "SELECT to_regclass('users')::text AS name")).rows[0].name, null, 'business database must not contain platform identity tables')
   assert.equal((await query(platformDb.writer, "SELECT to_regclass('work_orders')::text AS name")).rows[0].name, null, 'platform database must not contain business tickets')
-  const capture = (...values) => logs.push(JSON.stringify(values, (_, value) => value instanceof Error ? { code: safeCode(value) } : value))
-  const logger = { info: capture, warn: capture, error: capture, debug: capture, log: capture }
-  let notificationAddress,notificationProcess,notificationEnvironment
-  if(production) {
-    notificationEnvironment={...runtimeEnvironment,NODE_ENV:'production',METRICS_TOKEN:metrics.notification,DATABASE_URL:platformDb.connectionString,
-      PLATFORM_API_BASE_URL:gatewayBase,NOTIFICATION_ALLOWED_ORIGINS:gatewayBase,NOTIFICATION_HOST:'::1',NOTIFICATION_PORT:String(notificationPort),
-      NOTIFICATION_AUTH_RECHECK_MS:'1000',NOTIFICATION_HEALTH_PROBE_MS:'1000',NODE_EXTRA_CA_CERTS:process.env.PRODUCTION_CA_FILE}
-    notificationProcess=launch('notification',process.execPath,[path.join(process.env.PRODUCTION_ARTIFACT_ROOT,'notification-ws/index.ts')],{env:notificationEnvironment})
-    notificationAddress={port:notificationPort}
-    await until(async()=>{try{return (await http(`http://[::1]:${notificationPort}`,'GET','/health')).data?.status==='UP'}catch{return false}},'native production notification must become ready')
-  } else {
-    const config = { ...loadConfig({ DATABASE_URL: platformDb.connectionString, PLATFORM_API_BASE_URL: platformBase, NOTIFICATION_ALLOWED_ORIGINS: gatewayBase }), host: '::1', port: 0, recheckMs: 1000, healthProbeMs: 30000 }
-    notificationService = createNotificationService(config, { store: createPostgresStore(config, logger), logger })
-    notificationAddress = await notificationService.start()
-    await until(async () => (await notificationService.probeHealth()).status === 'UP', 'notification service must use the real platform and PostgreSQL')
-  }
+  const notificationMetricsToken=metrics.notification ?? randomBytes(32).toString('base64url')
+  secrets.add(notificationMetricsToken)
+  const notificationLaunch=notificationLaunchOptions({ binary:notificationExecutable, environment:runtimeEnvironment,
+    databaseUrl:platformDb.connectionString, platformOrigin:platformBase, allowedOrigin:gatewayBase,
+    port:notificationPort, production, metricsToken:notificationMetricsToken,
+    caFile:production ? process.env.PRODUCTION_CA_FILE : process.env.NOTIFICATION_PLATFORM_CA_FILE })
+  const notificationBinary=notificationLaunch.executable,notificationEnvironment=notificationLaunch.env
+  const notificationProcess=launch('notification',notificationBinary,notificationLaunch.args,{env:notificationEnvironment})
+  const notificationAddress={port:notificationPort}
+  await until(async()=>{
+    assert.ok(!notificationProcess.error && !notificationProcess.closed,'the prebuilt Rust notification process exited before readiness')
+    try{return (await http(`http://[::1]:${notificationPort}`,'GET','/health')).data?.status==='UP'}catch{return false}
+  },'Rust notification service must use the real platform and PostgreSQL',30000)
 
   async function command(label, args) {
     const item = launch(label, process.execPath, args,{env:runtimeEnvironment})
@@ -519,7 +586,7 @@ export async function fixture(t) {
     return false
   }
   return { root, ids, actors, administrator, manifests, releaseFiles, adminCommand, gatewayBase, platformBase, platformDb, businessDb, secrets,
-    ...(production?{production:true,productionGateway,platform,business,notificationProcess,notificationEnvironment,businessEnvironment,
+    ...(production?{production:true,productionGateway,platform,business,notificationProcess,notificationBinary,notificationEnvironment,businessEnvironment,
       platformEnvironment,metrics,platformInternalBase,businessBase,notificationPort,launch,stop,processes,databases,saveOwnership,
       jwtSecret,clientSecret,adminPassword,adminUsername,platformAdminUrl,businessAdminUrl,pg,createDatabase,productionEvidence}:{}),
     http, platformOk, appToken, login, accepted, denied, businessCall, create, records, setGrants, connectSocket, launchBrowser, qaImage, visualCheckpoint, debugResume, pace, hostHashes, hostRoot, logs }
