@@ -11,11 +11,11 @@ jobs:
         with:
           node-version-file: .nvmrc
       - run: npm install --global npm@11.16.0
-      - run: npm run deps:check
-      - run: npm run test:structure
+      - run: node scripts/check-inputs.mjs
+      - run: node --test tests/repository-structure.mjs
       - run: npm --prefix frontend ci --ignore-scripts --no-audit --no-fund
-      - run: npm run build:frontend -- --allowed-host-origin https://platform.example.com
-      - run: npm run test:frontend
+      - run: npm --prefix frontend run build -- --allowed-host-origin https://platform.example.com
+      - run: npm --prefix frontend test
   backend:
     runs-on: ubuntu-24.04
     steps:

@@ -3,13 +3,13 @@
 本仓库包含独立前端、Rust API、业务迁移与部署配置。构建无需平台源码或同级目录。运行时通过 HTTP 接入平台，使用独立 PostgreSQL 库与账号。
 
 ```powershell
-npm run deps:check
+node scripts/check-inputs.mjs
 npm --prefix frontend ci
-npm run build:frontend -- --allowed-host-origin https://platform.example.com
-npm run test:frontend
-npm run check:backend
-npm run test:backend
-npm run build:backend
+npm --prefix frontend run build -- --allowed-host-origin https://platform.example.com
+npm --prefix frontend test
+cargo check --locked --manifest-path backend/Cargo.toml --all-targets
+cargo test --locked --manifest-path backend/Cargo.toml --lib
+cargo build --locked --manifest-path backend/Cargo.toml
 ```
 
 构建 origin 是公开参数，请替换为真实宿主地址。服务运行前按 backend/README.md 配置平台 HTTPS、应用客户端及业务数据库；秘密放环境或忽略文件。
