@@ -117,7 +117,8 @@ impl Config {
         if metrics_token.as_ref().is_some_and(|v| {
             v.len() < 16
                 || v.len() > 1024
-                || v.chars().any(char::is_whitespace)
+                // The metrics endpoint reads a visible ASCII Bearer header.
+                || !v.bytes().all(|byte| byte.is_ascii_graphic())
                 || platform.as_ref().is_some_and(|p| p.client_secret == *v)
         }) {
             return Err(ConfigError::MetricsToken);
@@ -325,7 +326,13 @@ mod tests {
         let cfg = config(&[("WORK_ORDERS_METRICS_TOKEN", "private-operations-canary")]).unwrap();
         assert!(cfg.metrics_token.is_some());
         assert!(!format!("{cfg:?}").contains("private-operations-canary"));
-        for invalid in ["short", "contains whitespace secret"] {
+        for invalid in [
+            "short",
+            "contains whitespace secret",
+            "不可用于请求头的指标令牌",
+            "private\0operations-canary",
+            "private\u{7f}operations-canary",
+        ] {
             assert_eq!(
                 config(&[("WORK_ORDERS_METRICS_TOKEN", invalid)]).unwrap_err(),
                 ConfigError::MetricsToken
