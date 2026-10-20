@@ -1,0 +1,26 @@
+name: Independent business CI
+on: [push, pull_request, workflow_dispatch]
+permissions:
+  contents: read
+jobs:
+  frontend:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+      - run: npm install --global npm@11.16.0
+      - run: npm run deps:check
+      - run: npm --prefix frontend ci --ignore-scripts --no-audit --no-fund
+      - run: npm run build:frontend -- --allowed-host-origin https://platform.example.com
+      - run: npm run test:frontend
+  backend:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup toolchain install 1.97.0 --profile minimal --component rustfmt --component clippy
+      - run: cargo fmt --manifest-path backend/Cargo.toml --all -- --check
+      - run: cargo check --locked --manifest-path backend/Cargo.toml --all-targets
+      - run: cargo test --locked --manifest-path backend/Cargo.toml --lib
+      - run: cargo clippy --locked --manifest-path backend/Cargo.toml --all-targets -- -D warnings

@@ -1,0 +1,6 @@
+[package]
+name = "operational-telemetry"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Fixed-cardinality operational stage observations, without domain or transport dependencies"

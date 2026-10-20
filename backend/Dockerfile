@@ -2,12 +2,12 @@
 ARG RUST_IMAGE=rust:1.97.0-slim-bookworm
 ARG RUNTIME_IMAGE=debian:bookworm-slim
 FROM ${RUST_IMAGE} AS build
-WORKDIR /app/business-apps/work-orders/backend
+WORKDIR /app/backend
 ARG CARGO_BUILD_JOBS=2
-COPY business-apps/work-orders/backend/Cargo.toml business-apps/work-orders/backend/Cargo.lock ./
-COPY business-apps/work-orders/backend/src ./src
-COPY business-apps/work-orders/backend/migrations ./migrations
-COPY crates/operational-telemetry /app/crates/operational-telemetry
+COPY backend/Cargo.toml backend/Cargo.lock ./
+COPY backend/src ./src
+COPY backend/migrations ./migrations
+COPY vendor/operational-telemetry /app/vendor/operational-telemetry
 RUN cargo build --release --locked --bin work-orders-api
 
 FROM ${RUNTIME_IMAGE}
@@ -24,7 +24,7 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --system --gid 10001 business \
     && useradd --system --uid 10001 --gid business --no-create-home business
-COPY --from=build /app/business-apps/work-orders/backend/target/release/work-orders-api /usr/local/bin/work-orders-api
+COPY --from=build /app/backend/target/release/work-orders-api /usr/local/bin/work-orders-api
 ENV NODE_ENV=production WORK_ORDERS_HOST=0.0.0.0 WORK_ORDERS_PORT=3004 TZ=Asia/Shanghai RUST_LOG=info
 USER 10001:10001
 EXPOSE 3004

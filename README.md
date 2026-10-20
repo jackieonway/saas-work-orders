@@ -1,8 +1,35 @@
+# 工单独立仓库 saas-work-orders
+
+本仓库包含独立前端、Rust API、业务迁移与部署配置。构建无需平台源码或同级目录。运行时通过 HTTP 接入平台，使用独立 PostgreSQL 库与账号。
+
+```powershell
+npm run deps:check
+npm --prefix frontend ci
+npm run build:frontend -- --allowed-host-origin https://platform.example.com
+npm run test:frontend
+npm run check:backend
+npm run test:backend
+npm run build:backend
+```
+
+构建 origin 是公开参数，请替换为真实宿主地址。服务运行前按 backend/README.md 配置平台 HTTPS、应用客户端及业务数据库；秘密放环境或忽略文件。
+
+```powershell
+docker build -f backend/Dockerfile -t work-orders-api:local .
+docker build -f frontend/Dockerfile --build-arg APP_CODE=work-orders --build-arg APP_VERSION=1.0.0 --build-arg HOST_ORIGIN=https://platform.example.com --build-arg API_BASE=/work-orders-api -t work-orders-web:local .
+```
+
+SDK 1.0.0、纯指标协议与静态部署辅助代码已固定在仓库内；来源与逐文件 SHA-256 记录于 dependencies.lock.json。升级须从审阅的平台版本取得产物、更新摘要并运行测试。Docker context 为本仓库根。
+
+通过 subtree split 保留业务 Git 历史，原平台提交 `120c211587460f391cf30db73350188ee4ab1882`。远程仓库尚未配置。平台联合验收及统一入口 Compose 由平台仓库维护。旧文档中的阶段记录是历史背景，当前仓库根命令以上述说明为准；跨仓文档链接假定可选的平台检出名为 rust-saas。
+
+---
+
 # 独立工单业务试点
 
 独立源码发行目录的导出、干净构建、部署与兼容矩阵见[独立业务交付](../../docs/independent-business-delivery.md)。当前最终验收以[Phase34报告](../../docs/validation/phase-34.md)为准，下文保留各阶段的历史证据边界。
 
-Phase32 增加默认禁用的私有指标端点：显式设置独立 `WORK_ORDERS_METRICS_TOKEN` 后，从私有网络采集 `/work-orders-api/internal/metrics`。源码镜像从仓库根构建：`docker build -f business-apps/work-orders/backend/Dockerfile -t work-orders-api:candidate .`。固定指标协议不共享业务 SQL 或身份模型，指标含义及容量/告警限制见[监控说明](../../deploy/monitoring/README.md)。
+Phase32 增加默认禁用的私有指标端点：显式设置独立 `WORK_ORDERS_METRICS_TOKEN` 后，从私有网络采集 `/work-orders-api/internal/metrics`。源码镜像从仓库根构建：`docker build -f backend/Dockerfile -t work-orders-api:candidate .`。固定指标协议不共享业务 SQL 或身份模型，指标含义及容量/告警限制见[监控说明](../rust-saas/deploy/monitoring/README.md)。
 
 业务模型和平台边界见[系统架构](../../docs/architecture.md#platform-capabilities)。平台管理用户、租户、组织、操作权限、独立数据授权、应用 token、通知和发布指针；工单服务使用自己的 PostgreSQL 保存实际业务数据。Vue 前端通过默认 opaque iframe 和 MicroProps 2.0 bridge 接入宿主。
 
@@ -51,7 +78,7 @@ Rust提醒仅接受 `{idempotencyKey}`，键为1–128个ASCII `[A-Za-z0-9._:-]`
 
 实际 Rust 启动须私有配置 `PLATFORM_API_ORIGIN`、平台生成的 `PLATFORM_CLIENT_ID` 和 `PLATFORM_CLIENT_SECRET`，应用编码固定为 `work-orders`。`PLATFORM_AUTH_TIMEOUT_MS` 默认3000毫秒，是内省与context含响应读取的总预算；并发默认32，饱和立即503不排队，平台JSON每份最多256 KiB。CORS默认字面 `null`，额外 origin 必须精确配置。分页、CSV1000行／4 MiB、同范围快照和错误规则见 [Rust 操作说明](../../docs/work-orders-rust-baseline.md)。
 
-当前生产交付使用Rust工单API、专属数据库及独立Vite静态镜像。按[根部署说明](../../deploy/README.md)与[镜像交付说明](../../deploy/microapps/README.md)配置固定digest、HTTPS平台、客户端和独立数据库，通过business override接入；通知使用独立notification profile。旧Node index和legacy服务配置已在Phase34退役，legacy文件名仅保留空兼容文件，不再提供服务。
+当前生产交付使用Rust工单API、专属数据库及独立Vite静态镜像。按[根部署说明](../rust-saas/deploy/README.md)与[镜像交付说明](../rust-saas/deploy/microapps/README.md)配置固定digest、HTTPS平台、客户端和独立数据库，通过business override接入；通知使用独立notification profile。旧Node index和legacy服务配置已在Phase34退役，legacy文件名仅保留空兼容文件，不再提供服务。
 
 业务数据库/账号由部署方单独创建，不复用平台数据库或账号。前端版本、Rust API、业务数据库分别升级和回退；实际目标配置、凭据和外部发行仍由运维提供。
 
@@ -63,16 +90,16 @@ Opaque iframe 的业务请求携带字面 `Origin:null` 和短期应用 Bearer�
 
 推荐镜像路线先在部署系统拉取固定digest并检查容器health，使用所有环境共用的权威持久inventory执行Rust CLI artifact-bind／verify，再配置保留旧版本的入口Nginx路由。然后从应用管理“发布版本”登记已部署HTML URL，或使用带artifact／inventory参数的guarded register。登记得到DRAFT，单独preflight必须检查正文PASSED；HTTP200加FAILED不能激活，激活还会重新预检。平台不拉镜像、启停容器、生成路由或存储镜像digest，UI／RegisterBody只使用原六字段，来源不变性由CLI／CI独立清单负责。旧无inventory登记不等于镜像身份已验证。
 
-v1同域静态版本可用`/work-orders-api`；v2从批准的外部静态origin直载时，构建明确设置平台绝对HTTPS API base或该origin自有的受控代理。opaque iframe仍发送Origin:null和应用Bearer，省略Cookie，宿主白名单保持真实公开HTTPS origin。GitHub候选、受保护手工publication与Linux部署分别执行，实际registry／目标地址／凭据由操作者提供；源码工作流不表示已远端执行。两版本静态容器／路由须同时保留以服务旧chunk，前端回滚不回滚Rust API或数据库。完整步骤见[业务镜像交付](../../deploy/microapps/README.md)。
+v1同域静态版本可用`/work-orders-api`；v2从批准的外部静态origin直载时，构建明确设置平台绝对HTTPS API base或该origin自有的受控代理。opaque iframe仍发送Origin:null和应用Bearer，省略Cookie，宿主白名单保持真实公开HTTPS origin。GitHub候选、受保护手工publication与Linux部署分别执行，实际registry／目标地址／凭据由操作者提供；源码工作流不表示已远端执行。两版本静态容器／路由须同时保留以服务旧chunk，前端回滚不回滚Rust API或数据库。完整步骤见[业务镜像交付](../rust-saas/deploy/microapps/README.md)。
 
 前端独立锁定Vue3.5.43／Vite8.3.4，标准 `index.html` → `src/main.mjs` → 动态业务模块，不依赖window.Vue、root node_modules或 `frontend/public/sub-apps`。`base:'./'` 保持整个版本目录内相对入口／chunk／CSS，登记SDK1.0.0的classic bridge按原字节输出。明确配置实际宿主origin，并使用新版本号生成新构建：
 
 ```powershell
-cd business-apps/work-orders/frontend
+cd frontend
 npm ci --ignore-scripts
 npm run build -- --version 1.0.0 --allowed-host-origin https://saas.example.com --api-base /work-orders-api
 cd ../../..
-node scripts/package-microapp.mjs --app work-orders --environment production --version 1.0.0 --input business-apps/work-orders/frontend/dist
+node scripts/package-microapp.mjs --app work-orders --environment production --version 1.0.0 --input frontend/dist
 ```
 
 `asset-manifest.json`记录实际入口／动态chunk／CSS，`build-info.json`记录应用／SDK／Vue／Vite／Node版本、独立lock摘要及逐文件source摘要。公开配置不自动注入VITE_*、secret、DB URL或平台session。生产Nginx需为ESM、动态chunk、classic bridge和CSS提供正确MIME与匿名CORS，缺资源真实404；dev／preview仅是本地工具，不能作为生产服务。详见 [前端README](frontend/README.md)。
@@ -108,7 +135,7 @@ export WORK_ORDERS_E2E_HOST_DIST=/absolute/path/to/frontend/dist
 export NGINX_BIN=/absolute/path/to/nginx
 export PLAYWRIGHT_MODULE=/absolute/path/to/node_modules/playwright
 export BROWSER_EXECUTABLE=/absolute/path/to/chromium
-node --env-file=.env.test --test business-apps/work-orders/tests/platform-e2e.mjs
+node --env-file=.env.test --test tests/platform-e2e.mjs
 ```
 
 `PLATFORM_ADMIN_BIN` 必须为当前构建产物的绝对路径，`PHASE25_CLI_BIN` 可作同义输入。CLI 仅从子进程环境接收本次 fixture 的 Bearer，不放入 argv。开发使用明确允许的 IPv6 回环 HTTP；生产 HTTPS 保持证书与主机名验证，可通过 `PLATFORM_CA_FILE` 显式提供公开 PEM CA 链。此受管测试会将生产 fixture 的 `PRODUCTION_CA_FILE`（或其 `NODE_EXTRA_CA_CERTS`）显式映射为 CLI 的 `PLATFORM_CA_FILE`；CLI 自身不读取 Node 配置，也不接收私钥。

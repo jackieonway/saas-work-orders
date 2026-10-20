@@ -6,7 +6,7 @@ description = "Independent Rust work-order API and safe business database baseli
 publish = false
 
 [dependencies]
-operational-telemetry = { path = "../../../crates/operational-telemetry" }
+operational-telemetry = { path = "../vendor/operational-telemetry" }
 axum = { version = "0.8", default-features = false, features = ["http1", "json", "tokio"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "signal", "sync", "time"] }
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "tls-rustls-ring", "postgres", "uuid", "migrate"] }

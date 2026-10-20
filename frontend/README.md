@@ -23,7 +23,7 @@ npm run build -- --version 1.0.0 --allowed-host-origin https://platform.example.
 产物可通过平台管理页面上传 ZIP/tar.gz，或在仓库根目录使用 `scripts/package-microapp.mjs` 生成不可覆盖版本目录和登记清单。命令行打包不会自动登记、预检或激活：
 
 ```sh
-node scripts/package-microapp.mjs --app work-orders --environment development --version 1.0.0 --input business-apps/work-orders/frontend/dist
+node scripts/package-microapp.mjs --app work-orders --environment development --version 1.0.0 --input frontend/dist
 ```
 
 登记 SDK **1.0.0** 的 `iframe-bridge.js` 与 `micro-sdk.mjs` 固定在 `vendor/`。构建按原字节输出 classic iframe bridge，业务客户端引用同版的模块 SDK；Vue来自锁定的模块依赖，不复制旧 `vue.global.prod.js`。Vue MIT 许可包含在产物中。ESM 与动态 chunk 必须在真实 opaque iframe 中验收匿名 CORS。SDK 升级时应核对共享契约并重新登记前端版本。
@@ -60,7 +60,7 @@ node scripts/package-microapp.mjs --app work-orders --environment development --
 
 `npm test` 验证前端权限表达、取消与迟到响应、HTTP 409、CSV BOM/容量和独立提醒 DTO，并执行独立 Vite 构建、相对 ESM/动态 chunk、源码/SDK 元数据、秘密环境哨兵不泄露、输出目录保护，以及版本前缀下的静态 HTTP 与真实 404 回归。这些客户端及构建测试不能替代真实平台、数据库或 opaque iframe 验收。
 
-Phase21真实浏览器入口为 `../../../tests/phase21-work-orders-browser.mjs`，由配套services helper提供实际平台、独立Rust工单API、两座自有PostgreSQL、生产宿主／静态Nginx及TLS。其验证清单包括opaque module／动态chunk、Origin:null／无Cookie、普通用户CRUD／成员／CSV／持久提醒、提交后响应丢失的显式恢复、MENU互斥和失权隐藏；实时通知服务可保持未启动，持久收件箱单独核对。实际运行、资源清理和数量由 [Phase21报告](../../../docs/validation/phase-21.md)记录，不预记通过。
+Phase21真实浏览器入口为 `../../rust-saas/tests/phase21-work-orders-browser.mjs`，由配套services helper提供实际平台、独立Rust工单API、两座自有PostgreSQL、生产宿主／静态Nginx及TLS。其验证清单包括opaque module／动态chunk、Origin:null／无Cookie、普通用户CRUD／成员／CSV／持久提醒、提交后响应丢失的显式恢复、MENU互斥和失权隐藏；实时通知服务可保持未启动，持久收件箱单独核对。实际运行、资源清理和数量由 [Phase21报告](../../rust-saas/docs/validation/phase-21.md)记录，不预记通过。
 
 旧 `../tests/platform-e2e.mjs` 保留其完整兼容业务／通知／版本切换联合流程，不以旧Node服务或历史证据代替当前Rust前端验收；轻量Phase8竞态回归也保留独立边界。VM／构建HTTP、受控浏览器与真实平台联合结果分别记录，未执行不能计通过。
 
@@ -71,4 +71,4 @@ Phase21真实浏览器入口为 `../../../tests/phase21-work-orders-browser.mjs`
 
 JSON 与 CSV 都按流限制为 4 MiB，CSV 保留 UTF-8 BOM；请求强制省略 cookies，传入当前应用 Bearer 与 UUID `X-Request-Id`。独立业务 API 的 CORS 必须显式允许请求 `X-Request-Id` 并暴露响应 `X-Request-Id`，参考后端已支持；保持精确 origin 且不开放 credentials。`BusinessError` 继续提供工单 UI 使用的 status/code，并增加 kind/requestId，区分认证、禁止、冲突、网络及协议错误；错误不展示远端响应文本。工单特有的组织硬上限、功能权限与独立 grant 仍由 domain 和业务后端执行。
 
-vendor 是生成产物，请在仓库根执行 `npm run sdk:sync` 更新、执行 `npm run sdk:check` 验证；不要手改 vendor 或独立复制一份桥。源码独立构建所需的 SDK 文件已经随 vendor 提交，不依赖宿主运行时的 node_modules 或平台 storage。新 SDK 必须随新的不可变工单前端版本登记，旧发布目录保留以支持激活和回滚。完整支持能力和兼容策略见 [SDK 接入说明](../../../examples/micro-app-sdk/README.md)。
+vendor 是生成产物，请在仓库根执行 `npm run sdk:sync` 更新、执行 `npm run sdk:check` 验证；不要手改 vendor 或独立复制一份桥。源码独立构建所需的 SDK 文件已经随 vendor 提交，不依赖宿主运行时的 node_modules 或平台 storage。新 SDK 必须随新的不可变工单前端版本登记，旧发布目录保留以支持激活和回滚。完整支持能力和兼容策略见 [SDK 接入说明](../../rust-saas/examples/micro-app-sdk/README.md)。

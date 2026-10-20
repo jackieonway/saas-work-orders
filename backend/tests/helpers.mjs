@@ -17,7 +17,7 @@ export async function testDatabaseUrl() {
   const configured = process.env.WORK_ORDERS_TEST_DATABASE_URL ?? process.env.TEST_DATABASE_URL
   if (configured) return configured
   try {
-    const values = parseEnv(await readFile(new URL('../../../../.env.test', import.meta.url), 'utf8'))
+    const values = parseEnv(await readFile(new URL('../../.env.test', import.meta.url), 'utf8'))
     return values.TEST_DATABASE_URL || undefined
   } catch (error) {
     if (error.code === 'ENOENT') return undefined
@@ -198,7 +198,7 @@ export async function platformFixture(t) {
         json(response, 200, {
           contractVersion: '1.0', contextVersion: createHash('sha256').update(`fixture-${state.calls.context}`).digest('hex'), appCode: APP_CODE,
           expiresAt: new Date(Date.now() + 25_000).toISOString(),
-          application: { id: randomUUID(), name: '工单测试', runtimeMode: 'IFRAME', entryType: 'HTML', entryUrl: '/fixture/index.html' },
+          application: { id: randomUUID(), name: '宸ュ崟娴嬭瘯', runtimeMode: 'IFRAME', entryType: 'HTML', entryUrl: '/fixture/index.html' },
           user: { id: state.actor.userId, username: 'fixture-user', displayName: 'Fixture User' },
           tenant: { id: state.actor.tenantId, code: 'fixture', name: 'Fixture Tenant' },
           organization: { id: state.actor.organizationId, name: 'Fixture Organization', path: 'Fixture' },

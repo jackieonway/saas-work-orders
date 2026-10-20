@@ -1,0 +1,17 @@
+{
+  "name": "saas-work-orders",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "npm@11.16.0",
+  "scripts": {
+    "deps:check": "node scripts/check-inputs.mjs",
+    "dev:frontend": "npm --prefix frontend run dev",
+    "dev:backend": "cargo run --locked --manifest-path backend/Cargo.toml",
+    "build:frontend": "npm --prefix frontend run build --",
+    "build:backend": "cargo build --locked --manifest-path backend/Cargo.toml",
+    "test:frontend": "npm --prefix frontend test",
+    "test:backend": "cargo test --locked --manifest-path backend/Cargo.toml --lib",
+    "check:backend": "cargo check --locked --manifest-path backend/Cargo.toml --all-targets"
+  }
+}

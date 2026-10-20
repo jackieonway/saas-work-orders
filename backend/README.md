@@ -1,6 +1,6 @@
 # 工单业务 API
 
-当前服务入口统一为独立 Rust API，包含授权、读写/CSV、创建幂等、成员预校验和持久提醒恢复。Phase34已退役Node index，npm start分派锁定的Cargo命令；Node模块只作为CORS、历史协议及迁移兼容测试参考。构建与运行配置见[Rust工单说明](../../../docs/work-orders-rust-baseline.md)和[独立交付](../../../docs/independent-business-delivery.md)，实际验收见[Phase34](../../../docs/validation/phase-34.md)。
+当前服务入口统一为独立 Rust API，包含授权、读写/CSV、创建幂等、成员预校验和持久提醒恢复。Phase34已退役Node index，npm start分派锁定的Cargo命令；Node模块只作为CORS、历史协议及迁移兼容测试参考。构建与运行配置见[Rust工单说明](../../rust-saas/docs/work-orders-rust-baseline.md)和[独立交付](../../rust-saas/docs/independent-business-delivery.md)，实际验收见[Phase34](../../rust-saas/docs/validation/phase-34.md)。
 
 Rust 正式启动要求完整的 `PLATFORM_API_ORIGIN`、`PLATFORM_CLIENT_ID` 与 `PLATFORM_CLIENT_SECRET`，应用编码固定 `work-orders`；只加载业务库的 Config／旧健康 router 兼容路径不构成正式启动条件。授权超时默认3000毫秒为内省和context两次调用的总预算，并发默认32、饱和立即503；每份平台JSON最多256 KiB。精确CORS、可选根CA、上下游requestId、分页与CSV限制统一见上述 Rust 说明。
 
@@ -47,7 +47,7 @@ Phase18新增 [0002](migrations/0002_create_idempotency.sql)，Phase20新增 [00
 
 200仅返回UUID `publicationId`、`recipientCount:1`、`deliveryCount:1`、布尔 `duplicate` 和RFC3339 `createdAt`。以接收者真实平台session在当前组织的 `GET /api/notifications` 核对publicationId；实时服务未运行或无Toast不等于持久发布失败，删除收件箱消息后重放不会补建delivery。业务意图与平台发布不具跨库原子性；本地提交后工单可继续变化，平台200校验成功后不因再次读取工单而改判失败。
 
-旧Node迁移runner也会执行0003，但旧提醒handler不使用intent，不能提供上述目标固定和准备恢复保证。Phase20不改前端恢复、不部署切流，完整状态与采用边界见 [Rust工单说明](../../../docs/work-orders-rust-baseline.md)。
+旧Node迁移runner也会执行0003，但旧提醒handler不使用intent，不能提供上述目标固定和准备恢复保证。Phase20不改前端恢复、不部署切流，完整状态与采用边界见 [Rust工单说明](../../rust-saas/docs/work-orders-rust-baseline.md)。
 
 ## Rust启动与迁移
 
@@ -109,4 +109,4 @@ CSV 包含人类可读编号、组织和人员名称，状态与优先级使用�
 
 `npm test` 包括配置与真实 HTTP/独立 PostgreSQL 验收。真实业务数据库测试读取 `TEST_DATABASE_URL`，只创建并删除自身 UUID 随机库。平台 HTTP fixture 用于精确负向协议测试；完整平台 main、独立平台/业务数据库、真实登录、Socket.IO 和 iframe 联合测试位于上一级 `tests/platform-e2e.mjs`。
 
-Phase 30 授权链、受控成员协议、分页上限、预算参数与显式 legacy 回滚见[应用授权协议](../../../docs/application-authorization-contract.md)。
+Phase 30 授权链、受控成员协议、分页上限、预算参数与显式 legacy 回滚见[应用授权协议](../../rust-saas/docs/application-authorization-contract.md)。

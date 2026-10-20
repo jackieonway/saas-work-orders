@@ -1,10 +1,10 @@
 # 工单应用：平台初始化、授权与独立发布
 
-这里使用[独立 Rust 管理 CLI](../../../tools/platform-admin/README.md)，可执行文件为 `saas-platform-admin`，只使用现有平台 API。旧 Node 管理入口与 SQL 草案输出已退役。通用上传与部署流程见[架构文档](../../../docs/architecture.md#releases)，本文件说明该命令行工具的参数、授权计划和兼容发布流程。平台应用身份固定为 `work-orders`，运行方式固定为 **IFRAME + HTML**；宿主通过 iframe bridge 和平台 SDK 提供短期应用 token。工具不会创建 TRUSTED 应用、读取平台 JWT 签名密钥、重建宿主或默认分配任何租户／组织／角色／成员授权。
+这里使用[独立 Rust 管理 CLI](../../rust-saas/tools/platform-admin/README.md)，可执行文件为 `saas-platform-admin`，只使用现有平台 API。旧 Node 管理入口与 SQL 草案输出已退役。通用上传与部署流程见[架构文档](../../rust-saas/docs/architecture.md#releases)，本文件说明该命令行工具的参数、授权计划和兼容发布流程。平台应用身份固定为 `work-orders`，运行方式固定为 **IFRAME + HTML**；宿主通过 iframe bridge 和平台 SDK 提供短期应用 token。工具不会创建 TRUSTED 应用、读取平台 JWT 签名密钥、重建宿主或默认分配任何租户／组织／角色／成员授权。
 
-根Compose默认服务为Rust平台API、PostgreSQL、宿主静态与独立入口Nginx。Rust工单API已有读写／成员／持久提醒，Phase21前端改为独立Vue／Vite消费者，但未执行生产切流；保留的Node工单兼容路线仍须显式包含[遗留override](../../../deploy/compose.legacy.yml)和legacy profile，以及[遗留变量模板](../../../deploy/compose.legacy.env.example)。通知另由Phase23独立Rust profile提供。镜像由运维预先提供固定digest，legacy override不构建镜像、不启动工单数据库、不发布服务端口、不挂载源码或可写持久卷。业务数据库与账号仍需独立配置。
+根Compose默认服务为Rust平台API、PostgreSQL、宿主静态与独立入口Nginx。Rust工单API已有读写／成员／持久提醒，Phase21前端改为独立Vue／Vite消费者，但未执行生产切流；保留的Node工单兼容路线仍须显式包含[遗留override](../../rust-saas/deploy/compose.legacy.yml)和legacy profile，以及[遗留变量模板](../../rust-saas/deploy/compose.legacy.env.example)。通知另由Phase23独立Rust profile提供。镜像由运维预先提供固定digest，legacy override不构建镜像、不启动工单数据库、不发布服务端口、不挂载源码或可写持久卷。业务数据库与账号仍需独立配置。
 
-Phase28 推荐镜像路径现由[业务镜像交付说明](../../../deploy/microapps/README.md)、[业务 Compose override](../../../deploy/compose.business.yml)和[公开变量模板](../../../deploy/compose.business.env.example)提供。它独立部署 Rust 工单 API 与 v1/v2 前端静态容器，复用入口 Nginx 的固定版本路由，不需要平台产物卷。该新 override 与同名 Node legacy 服务不能同时合并；通知仍使用自己的独立 override。平台 bootstrap、菜单和 grant 流程保持下文语义，镜像部署不会自动授权，也不表示生产切流已经执行。
+Phase28 推荐镜像路径现由[业务镜像交付说明](../../rust-saas/deploy/microapps/README.md)、[业务 Compose override](../../rust-saas/deploy/compose.business.yml)和[公开变量模板](../../rust-saas/deploy/compose.business.env.example)提供。它独立部署 Rust 工单 API 与 v1/v2 前端静态容器，复用入口 Nginx 的固定版本路由，不需要平台产物卷。该新 override 与同名 Node legacy 服务不能同时合并；通知仍使用自己的独立 override。平台 bootstrap、菜单和 grant 流程保持下文语义，镜像部署不会自动授权，也不表示生产切流已经执行。
 
 本阶段受管 API 验收使用冻结 Linux 源码独立 locked Cargo 编译、核对 ELF/source/inputs/platform/SHA-256 后 runtime 装箱，候选报告明确记录 `verified-prebuilt-ELF`。默认 [Rust Dockerfile](../backend/Dockerfile)保留独立源码 builder；未实际运行默认 builder 不能记为 PASS。静态前端仍用自己的 lockfile 从源码 Docker build，实际 registry pull、业务及浏览器结论须读取本次 Phase28 报告。
 
@@ -14,7 +14,7 @@ Phase28 推荐镜像路径现由[业务镜像交付说明](../../../deploy/micro
 docker compose --env-file /secure/platform.env --env-file /secure/platform-legacy.env -f docker-compose.yml -f deploy/compose.legacy.yml --profile legacy config --quiet
 ```
 
-只有独立 Nginx 发布 HTTPS 入口。现有 `/work-orders-api` 原前缀转发到私网 `work-orders-api:3004`；该 legacy override 只保留工单兼容 API，不表示 Rust 工单（Phase 16–20）已切流。通知已由 Phase 23 的[独立 Rust Compose](../../../deploy/compose.notification.yml)提供，`/socket.io/` 转发到私网 `notification-ws:3003`。通知健康探针需要通过公开 HTTPS 平台验证保护路由，入口不能反向等待通知就绪而形成启动死锁；旧通知容器需按原部署清单精确停止，详见[通知切流说明](../../../mini-services/notification-ws/README.md)。
+只有独立 Nginx 发布 HTTPS 入口。现有 `/work-orders-api` 原前缀转发到私网 `work-orders-api:3004`；该 legacy override 只保留工单兼容 API，不表示 Rust 工单（Phase 16–20）已切流。通知已由 Phase 23 的[独立 Rust Compose](../../rust-saas/deploy/compose.notification.yml)提供，`/socket.io/` 转发到私网 `notification-ws:3003`。通知健康探针需要通过公开 HTTPS 平台验证保护路由，入口不能反向等待通知就绪而形成启动死锁；旧通知容器需按原部署清单精确停止，详见[通知切流说明](../../rust-saas/mini-services/notification-ws/README.md)。
 
 使用新业务 override 时，同一 `/work-orders-api` 前缀明确指向独立 Rust 镜像。操作者先固定 digest pull/start 并检查真实 Docker health，使用 Rust CLI 对 release/artifact 执行持久 `artifact-bind --apply` 与 `artifact-verify`，再保留旧版本路由地推进 Nginx 配置，最后执行带 `--artifact-file`／`--inventory-dir` 的 register、preflight 和 activate。旧六字段 URL release 定义不添加 image/digest/target；digest 一致性由 CLI/CI journal 拒绝冲突，不能声称平台已保存校验它。已部署 URL 管理入口与 ZIP 兼容发布并存，不改变下文授权及幂等要求。
 
@@ -64,7 +64,7 @@ saas-platform-admin
 saas-platform-admin bootstrap --environment production
 ```
 
-先审阅 [Rust 内嵌的 bootstrap 清单](../../../tools/platform-admin/manifests/bootstrap.manifest.json)和[严格 schema](../../../tools/platform-admin/schemas/bootstrap.schema.json)。本目录的 [bootstrap.manifest.json](bootstrap.manifest.json) 保留为公开兼容 source，并与 Rust 清单同步。CLI 不接收外部 bootstrap 清单。它定义唯一应用、默认空授权和七个稳定 key 的节点：可见的 `/micro/work-orders` 根 MENU、隐藏的详情 MENU、可见的创建 MENU，以及四个不可见 BUTTON：
+先审阅 [Rust 内嵌的 bootstrap 清单](../../rust-saas/tools/platform-admin/manifests/bootstrap.manifest.json)和[严格 schema](../../rust-saas/tools/platform-admin/schemas/bootstrap.schema.json)。本目录的 [bootstrap.manifest.json](bootstrap.manifest.json) 保留为公开兼容 source，并与 Rust 清单同步。CLI 不接收外部 bootstrap 清单。它定义唯一应用、默认空授权和七个稳定 key 的节点：可见的 `/micro/work-orders` 根 MENU、隐藏的详情 MENU、可见的创建 MENU，以及四个不可见 BUTTON：
 
 | key | 类型与路径 | 功能权限与显示 |
 | --- | --- | --- |
@@ -136,7 +136,7 @@ Bootstrap 不隐含授权。复制 [grants.manifest.example.json](grants.manifes
 
 日常数据授权使用正式管理 API。`DATA_GRANT_POLICY` 由平台运维显式配置应用能力和允许管理的目标租户／组织根范围；平台根身份或管理员自身业务 grant 都不能代替这份边界。`system:data-grant:read` 与 `system:data-grant:write` 是两项独立 BUTTON 权限，宽泛用户／角色／菜单／授权管理权不与它们等价。GET 需要 read；preview 需要 read + write，PATCH 需要 write，两个变更入口还都要求有效平台根上下文。业务用户的成员查询和工单操作不需要 grant 管理权。
 
-全新开发/生产 bootstrap 在既有 `system:authorization` 菜单下登记隐藏 read/write BUTTON，并显式授予平台管理员角色、平台租户和根组织。已有安装不自动添加菜单或补授权，应由授权管理员使用既有菜单和授权 API 显式采用；普通组织管理员不会因此获得写权。配置形状、独立权限与升级步骤见[平台数据 grant 管理契约](../../../docs/data-grant-management.md)。
+全新开发/生产 bootstrap 在既有 `system:authorization` 菜单下登记隐藏 read/write BUTTON，并显式授予平台管理员角色、平台租户和根组织。已有安装不自动添加菜单或补授权，应由授权管理员使用既有菜单和授权 API 显式采用；普通组织管理员不会因此获得写权。配置形状、独立权限与升级步骤见[平台数据 grant 管理契约](../../rust-saas/docs/data-grant-management.md)。
 
 生成可审阅 API 计划；也可先查看受控执行命令的离线计划：
 
@@ -145,7 +145,7 @@ saas-platform-admin grants-plan --manifest path/to/approved-grants.json
 saas-platform-admin grants-apply --manifest path/to/approved-grants.json
 ```
 
-这两个示例不读取网络配置、不发 HTTP 请求、不连接 PostgreSQL、不提交授权。`grants-plan` 输出明确租户/组织请求、角色当前集合并集要求和数据 grant 的 GET→preview→PATCH 顺序，标记必须读取实时版本；输出仅是**管理员明确清单的审核产物**。输入遵循[严格 grants schema](../../../tools/platform-admin/schemas/grants.schema.json)，不接受未知字段、凭据、其他应用编码、未批准权限、重复成员或冲突 action/scope。
+这两个示例不读取网络配置、不发 HTTP 请求、不连接 PostgreSQL、不提交授权。`grants-plan` 输出明确租户/组织请求、角色当前集合并集要求和数据 grant 的 GET→preview→PATCH 顺序，标记必须读取实时版本；输出仅是**管理员明确清单的审核产物**。输入遵循[严格 grants schema](../../rust-saas/tools/platform-admin/schemas/grants.schema.json)，不接受未知字段、凭据、其他应用编码、未批准权限、重复成员或冲突 action/scope。
 
 批准完整目标、专用角色受众与作用域，并暂停同范围并发管理后，明确执行：
 
@@ -204,8 +204,8 @@ POST/PATCH 使用同一 body 形状：
 Phase21前端使用本目录之外 `../frontend/` 的独立Vue3.5.43／Vite8.3.4锁依赖；Node24.18.0／npm11.16.0只参与构建／验证，生产只运行静态Nginx。先从仓库根执行独立安装及标准Vite构建，实际宿主origin由部署方明确提供：
 
 ```powershell
-npm --prefix business-apps/work-orders/frontend ci --ignore-scripts
-npm --prefix business-apps/work-orders/frontend run build -- --version 1.0.0 --allowed-host-origin https://saas.example.com --api-base /work-orders-api
+npm --prefix frontend ci --ignore-scripts
+npm --prefix frontend run build -- --version 1.0.0 --allowed-host-origin https://saas.example.com --api-base /work-orders-api
 ```
 
 产物采用 `base:'./'`，标准index／模块入口、真实动态chunk、CSS和classic iframe bridge全部相对固定版本目录。`asset-manifest.json`与 `build-info.json`记录真实资源、应用／SDK／Vue／Vite／Node版本、独立lock及source摘要；公开config仅含版本、精确宿主白名单和API地址，不自动注入VITE_*、secret、数据库URL或平台session。dev／preview只用于本地工具，不能作为生产服务；完整配置见 [前端README](../frontend/README.md)。
@@ -218,7 +218,7 @@ node scripts/package-microapp.mjs --app work-orders --environment production --v
 
 默认生成 `deploy/micro-apps/work-orders/versions/1.0.0/` 和其中的 `release.json`，入口为 `/sub-apps/work-orders/versions/1.0.0/index.html`。已有版本目录不能覆盖，变更使用新版本号；不要发布 `.env`、secret、source token 或其它敏感文件。
 
-将整个版本目录复制到网关对应不可变目录并保留旧版本／chunk。opaque iframe匿名加载ESM、动态chunk、classic bridge和CSS，需要正确MIME和静态 `Access-Control-Allow-Origin:*` 或null；不存在资源必须真实404，不回落入口HTML。入口CSP frame-ancestors／X-Frame-Options须允许宿主，iframe不增加allow-same-origin或下载权限。静态匿名CORS不扩展到业务API：工单请求保持Origin:null、当前应用Bearer、credentials:omit，由Rust生成精确业务CORS，Nginx透传。平台代理预检使用服务器精确origin allowlist，CLI配置不能扩大它，见 [独立发布API](../../../docs/architecture.md#release-contract)。
+将整个版本目录复制到网关对应不可变目录并保留旧版本／chunk。opaque iframe匿名加载ESM、动态chunk、classic bridge和CSS，需要正确MIME和静态 `Access-Control-Allow-Origin:*` 或null；不存在资源必须真实404，不回落入口HTML。入口CSP frame-ancestors／X-Frame-Options须允许宿主，iframe不增加allow-same-origin或下载权限。静态匿名CORS不扩展到业务API：工单请求保持Origin:null、当前应用Bearer、credentials:omit，由Rust生成精确业务CORS，Nginx透传。平台代理预检使用服务器精确origin allowlist，CLI配置不能扩大它，见 [独立发布API](../../rust-saas/docs/architecture.md#release-contract)。
 
 每一步都是独立命令：
 
@@ -247,7 +247,7 @@ saas-platform-admin deployments --environment production
 
 发布／回退前先核对当前页面未确认的创建、版本写入和提醒。Phase21浏览器草稿／事件只在同一存活iframe内按app／tenant／org／user隔离，跨路由／续期／切组织返回可恢复；刷新、关闭或更换发布实例不保证保留，不用opaque localStorage或新SDK存储能力。未知结果应保持页面直至显式核对完成，合法成功DTO校验前不结束原事件；后端0003持久意图和创建receipt不会随前端版本回退清理。旧前端无创建header／恢复协议，不能当当前Rust行为的等价回退，也不能通过删receipt／intent或改迁移checksum解决。
 
-创建 `/micro/work-orders/ticket-create` 与详情 `/micro/work-orders/tickets/:id` 的MENU仍分别授权；新构建、登记、预检和启用不补权限或grant。Phase21实际opaque模块／chunk、Rust API、普通用户操作及未知结果的浏览器结果由 [Phase21](../../../docs/validation/phase-21.md)单独记录；命令和配置说明不表示本轮已操作生产发布或切流。
+创建 `/micro/work-orders/ticket-create` 与详情 `/micro/work-orders/tickets/:id` 的MENU仍分别授权；新构建、登记、预检和启用不补权限或grant。Phase21实际opaque模块／chunk、Rust API、普通用户操作及未知结果的浏览器结果由 [Phase21](../../rust-saas/docs/validation/phase-21.md)单独记录；命令和配置说明不表示本轮已操作生产发布或切流。
 
 ## 5. 失败与安全测试
 
