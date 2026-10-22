@@ -1,0 +1,56 @@
+# Runtime only: independently build the frontend/backend images first.
+services:
+  work-orders-postgres:
+    image: ${POSTGRES_IMAGE:?Set an approved PostgreSQL image digest}
+    environment:
+      POSTGRES_USER: work_orders
+      POSTGRES_DB: work_orders
+      POSTGRES_PASSWORD: ${WORK_ORDERS_POSTGRES_PASSWORD:?Set the dedicated database password}
+    volumes: [business-data:/var/lib/postgresql/data]
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U work_orders -d work_orders']
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    restart: unless-stopped
+    networks: [database]
+  work-orders-api:
+    image: ${WORK_ORDERS_API_IMAGE:?Set this application's API image digest}
+    environment:
+      NODE_ENV: production
+      WORK_ORDERS_HOST: 0.0.0.0
+      WORK_ORDERS_PORT: '3004'
+      WORK_ORDERS_DATABASE_URL: ${WORK_ORDERS_DATABASE_URL:?Set the dedicated business database URL}
+      WORK_ORDERS_ALLOWED_ORIGINS: 'null'
+      WORK_ORDERS_METRICS_TOKEN: ${WORK_ORDERS_METRICS_TOKEN:-}
+      PLATFORM_API_ORIGIN: ${PLATFORM_API_ORIGIN:?Set the real platform HTTPS origin}
+      PLATFORM_CLIENT_ID: ${PLATFORM_CLIENT_ID:?Set this application's confidential client ID}
+      PLATFORM_CLIENT_SECRET: ${PLATFORM_CLIENT_SECRET:?Set this application's confidential client secret}
+    depends_on:
+      work-orders-postgres: {condition: service_healthy}
+    ports:
+      - '127.0.0.1:${API_PORT:-3004}:3004'
+    read_only: true
+    tmpfs: ["/tmp:rw,noexec,nosuid,size=32m"]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+    networks: [database, edge]
+  work-orders-web:
+    image: ${WORK_ORDERS_FRONTEND_IMAGE:?Set this application's static frontend image digest}
+    ports:
+      - '127.0.0.1:${FRONTEND_PORT:-3013}:8080'
+    read_only: true
+    tmpfs: ["/tmp:rw,noexec,nosuid,size=32m"]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+    networks: [edge]
+networks:
+  database:
+    internal: true
+  edge:
+    external: true
+    name: ${EDGE_NETWORK_NAME:?Set the existing private gateway network}
+volumes:
+  business-data:

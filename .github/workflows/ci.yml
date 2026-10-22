@@ -14,13 +14,16 @@ jobs:
         with:
           node-version-file: frontend/.nvmrc
       - run: npm install --global npm@11.16.0
-      - run: node ../backend/scripts/check-inputs.mjs
-      - run: node --test ../backend/acceptance/repository-structure.mjs
+      - run: node ../.github/scripts/check-inputs.mjs
+      - run: node --test ../.github/tests/repository-structure.mjs
       - run: npm ci --ignore-scripts --no-audit --no-fund
       - run: npm run build -- --allowed-host-origin https://platform.example.com
       - run: npm test
   backend:
     runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: backend
     steps:
       - uses: actions/checkout@v4
       - run: rustup toolchain install 1.97.0 --profile minimal --component rustfmt --component clippy
@@ -28,3 +31,22 @@ jobs:
       - run: cargo check --locked --all-targets
       - run: cargo test --locked --lib
       - run: cargo clippy --locked --all-targets -- -D warnings
+
+  images:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        directory: [frontend, backend]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Build this application image
+        run: >-
+          docker build --build-arg APP_CODE=work-orders
+          --build-arg APP_VERSION=ci-${{ github.run_number }}
+          --build-arg HOST_ORIGIN=https://platform.example.com
+          --build-arg API_BASE=/work-orders-api
+          --build-arg SOURCE_REVISION=${{ github.sha }}
+          -t saas-work-orders-${{ matrix.directory }}:ci ${{ matrix.directory }}
