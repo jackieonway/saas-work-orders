@@ -1,0 +1,71 @@
+{
+  "schemaVersion": 1,
+  "sdkVersion": "2.0.0",
+  "contracts": {
+    "context": "1.0",
+    "microProps": "2.0",
+    "notification": "1.0"
+  },
+  "files": [
+    {
+      "path": "capabilities.d.mts",
+      "bytes": 437,
+      "sha256": "4d68d6b325cca39df0312eae9eb6efb7affa55763efe0bbb52f6c30aaeccd6af"
+    },
+    {
+      "path": "http.d.mts",
+      "bytes": 1119,
+      "sha256": "82c41e76d47c873dd1209b831d482b8521ace0586167083b5e7eef0b96b36c3f"
+    },
+    {
+      "path": "index.d.mts",
+      "bytes": 1541,
+      "sha256": "9562bfba60aef34811e2c98e59bfef715ef29966d8a4c9493deac77bf351fe10"
+    },
+    {
+      "path": "index.d.ts",
+      "bytes": 1541,
+      "sha256": "9562bfba60aef34811e2c98e59bfef715ef29966d8a4c9493deac77bf351fe10"
+    },
+    {
+      "path": "index.mjs",
+      "bytes": 16207,
+      "sha256": "fc8080c2e6d01c262788a3f48232cb2659a558f635ebef7d8991ae8738f443ce"
+    },
+    {
+      "path": "package.json",
+      "bytes": 309,
+      "sha256": "038f282ef3696abce27e1e61a3f7e7745a378dca9d79123cff8d114ae22b5f63"
+    },
+    {
+      "path": "protocol.d.mts",
+      "bytes": 679,
+      "sha256": "dcbebdd3d10afc24e534fe10f7905c0eb684f31673c08980cc5146b5f01b0b63"
+    },
+    {
+      "path": "protocol.mjs",
+      "bytes": 779,
+      "sha256": "68e7f2f185315766dceb2a8c9113fc37aab1b720e11395f05b4d7202652a3fde"
+    },
+    {
+      "path": "protocol.rs",
+      "bytes": 24030,
+      "sha256": "6613cf9825e27b89ccd5fc095bee3f974c34f78103df0d43cebf7b51944c42ca"
+    },
+    {
+      "path": "schema.json",
+      "bytes": 20299,
+      "sha256": "7205dc0edccb87e69c13e0d0160bdf4f6ff662c7eb7487873139d0b5f5c9f4ce"
+    },
+    {
+      "path": "sdk.js",
+      "bytes": 18057,
+      "sha256": "3c1545da8ac535dd3a7a2fd619bcd2994977b8711a06a625fa661dda13ebb4df"
+    },
+    {
+      "path": "types.d.ts",
+      "bytes": 5400,
+      "sha256": "be11099106fcb960cfbbe29c462a600ff4e066225d9e49318607858f1875ea5b"
+    }
+  ]
+}

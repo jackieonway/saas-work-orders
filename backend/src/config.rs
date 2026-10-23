@@ -21,6 +21,7 @@ use crate::error::ConfigError;
 /// let config = Config::from_pairs([
 ///     ("WORK_ORDERS_DATABASE_URL", "postgresql://worker:example@127.0.0.1/orders"),
 ///     ("WORK_ORDERS_HOST", "127.0.0.1"),
+///     ("WORK_ORDERS_ALLOWED_ORIGINS", "http://127.0.0.1:3000"),
 /// ])?;
 /// assert_eq!(config.bind_address().port(), 3004);
 /// # Ok::<(), work_orders_api::ConfigError>(())
@@ -97,18 +98,15 @@ impl Config {
             number(&get, name, default, min, max).map(Duration::from_millis)
         };
         let platform = platform_config(&get, production)?;
+        // A public browser origin is an explicit deployment input. Never infer
+        // it from the private platform API origin or trust an opaque iframe.
         let allowed_origins = get("WORK_ORDERS_ALLOWED_ORIGINS")
-            .unwrap_or_else(|| "null".into())
+            .ok_or(ConfigError::AllowedOrigin)?
             .split(',')
             .map(|raw| {
-                let raw = raw.trim();
-                if raw == "null" {
-                    Ok(raw.to_owned())
-                } else {
-                    exact_origin(raw, production)
-                        .map(|url| url.origin().ascii_serialization())
-                        .map_err(|_| ConfigError::AllowedOrigin)
-                }
+                exact_origin(raw.trim(), production)
+                    .map(|url| url.origin().ascii_serialization())
+                    .map_err(|_| ConfigError::AllowedOrigin)
             })
             .collect::<Result<std::collections::BTreeSet<_>, _>>()?
             .into_iter()
@@ -317,7 +315,15 @@ mod tests {
 
     fn config(extra: &[(&str, &str)]) -> Result<Config, ConfigError> {
         Config::from_pairs(
-            std::iter::once(("WORK_ORDERS_DATABASE_URL", URL)).chain(extra.iter().copied()),
+            [
+                ("WORK_ORDERS_DATABASE_URL", URL),
+                (
+                    "WORK_ORDERS_ALLOWED_ORIGINS",
+                    "https://platform.example.test",
+                ),
+            ]
+            .into_iter()
+            .chain(extra.iter().copied()),
         )
     }
     #[test]
@@ -403,6 +409,10 @@ mod tests {
             let config = Config::from_pairs([
                 ("WORK_ORDERS_DATABASE_URL", uri.as_str()),
                 ("NODE_ENV", "production"),
+                (
+                    "WORK_ORDERS_ALLOWED_ORIGINS",
+                    "https://platform.example.test",
+                ),
             ])
             .unwrap();
             assert_eq!(
@@ -415,7 +425,11 @@ mod tests {
                 "WORK_ORDERS_DATABASE_URL",
                 format!("{URL}?sslmode=verify-full")
             ),
-            ("NODE_ENV", "production".into())
+            ("NODE_ENV", "production".into()),
+            (
+                "WORK_ORDERS_ALLOWED_ORIGINS",
+                "https://platform.example.test".into()
+            )
         ])
         .is_ok());
     }
@@ -472,7 +486,7 @@ mod tests {
                 legacy
             );
         }
-        assert_eq!(cfg.allowed_origins, ["null"]);
+        assert_eq!(cfg.allowed_origins, ["https://platform.example.test"]);
         assert!(!format!("{cfg:?} {settings:?}").contains("PRIVATE_CLIENT_SECRET"));
         for (name, value) in [
             ("PLATFORM_CLIENT_ID", "bad:client"),
@@ -494,6 +508,10 @@ mod tests {
 
     #[test]
     fn origins_require_exact_https_or_development_loopback_http() {
+        assert_eq!(
+            Config::from_pairs([("WORK_ORDERS_DATABASE_URL", URL)]).unwrap_err(),
+            ConfigError::AllowedOrigin
+        );
         for origin in [
             "https://platform.test",
             "https://platform.test:8443",
@@ -521,13 +539,16 @@ mod tests {
         assert!(exact_origin("https://platform.test", true).is_ok());
         let allowed = config(&[(
             "WORK_ORDERS_ALLOWED_ORIGINS",
-            "null,https://frontend.test,null",
+            "https://frontend.test,https://frontend.test",
         )])
         .unwrap();
-        assert_eq!(allowed.allowed_origins, ["https://frontend.test", "null"]);
+        assert_eq!(allowed.allowed_origins, ["https://frontend.test"]);
         for origins in [
             "",
+            "null",
             "null,",
+            "null,https://frontend.test",
+            "*",
             "https://frontend.test/",
             "http://internal.test",
         ] {

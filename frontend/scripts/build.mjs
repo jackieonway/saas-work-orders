@@ -1,9 +1,10 @@
-import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, rmSync } from 'node:fs'
+import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
 import { fileURLToPath } from 'node:url'
 import { build } from 'vite'
 import { createWorkOrdersConfig, readPublicConfig } from '../vite.config.mjs'
+import { checkRelease, releaseFiles, releaseHashFile } from './release-check.mjs'
 
 const appRoot = fileURLToPath(new URL('../', import.meta.url))
 const args = process.argv.slice(2), options = { origins: [] }
@@ -13,7 +14,8 @@ for (let index = 0; index < args.length; index += 2) {
   if (name === '--allowed-host-origin') options.origins.push(value)
   else options[name.slice(2)] = value
 }
-const publicConfig = readPublicConfig(options)
+const packageVersion = JSON.parse(readFileSync(path.join(appRoot, 'package.json'), 'utf8')).version
+const publicConfig = readPublicConfig({ ...options, version: options.version || process.env.WORK_ORDERS_VERSION || packageVersion })
 
 // Resolve existing ancestors before allowing any recursive operation. A symlink
 // must not turn a permitted temporary path into an unrelated directory.
@@ -45,4 +47,11 @@ if (existsSync(destination)) {
 mkdirSync(destination, { recursive: true })
 const config = createWorkOrdersConfig(publicConfig)
 await build({ ...config, configFile: false, build: { ...config.build, outDir: destination } })
+const metadataPath = path.join(destination, 'build-info.json')
+const metadata = JSON.parse(readFileSync(metadataPath, 'utf8'))
+writeFileSync(metadataPath, JSON.stringify({ ...metadata, format: 'umd', releaseGateVersion: 1, packageVersion, publicConfig }, null, 2) + '\n')
+writeFileSync(path.join(destination, releaseHashFile), JSON.stringify({ schemaVersion: 1, application: 'work-orders',
+  version: publicConfig.version, files: releaseFiles(destination) }, null, 2) + '\n')
+const report = await checkRelease(destination, { expectedVersion: publicConfig.version, expectedPublicConfig: publicConfig })
+console.log(`Release gate passed: ${report.runtime}, SDK ${report.sdkVersion}, ${report.files} files`)
 console.log(`工单应用 ${publicConfig.version} 已构建：${destination}`)

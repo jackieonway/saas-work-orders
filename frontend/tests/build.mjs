@@ -39,7 +39,7 @@ test('remote HTTP hosts and APIs are rejected before producing a release', (t) =
   }
 })
 
-test('production release contains a relative ESM graph, a dynamic application chunk, and exact source/SDK metadata', t => {
+test('default production release contains qiankun UMD with exact source/SDK metadata and no private configuration', t => {
   const secret = 'phase21-private-sentinel-never-public'
   const result = build(t, 'https://platform.example.com', '/work-orders-api', { env: {
     VITE_CLIENT_SECRET: secret, DATABASE_URL: secret, WORK_ORDERS_CLIENT_SECRET: secret,
@@ -48,7 +48,8 @@ test('production release contains a relative ESM graph, a dynamic application ch
   const json = name => JSON.parse(readFileSync(path.join(result.output, name), 'utf8'))
   const info = json('build-info.json'), manifest = json('asset-manifest.json')
   assert.equal(info.application, 'work-orders')
-  assert.equal(info.sdkVersion, '1.0.0')
+  assert.equal(info.sdkVersion, '2.0.0')
+  assert.equal(info.runtime, 'qiankun')
   assert.equal(info.vueVersion, '3.5.43')
   assert.equal(info.viteVersion, '8.3.4')
   assert.equal(info.inputCount, info.inputs.length)
@@ -58,32 +59,30 @@ test('production release contains a relative ESM graph, a dynamic application ch
     assert.equal(input.bytes, bytes.length)
     assert.equal(input.sha256, sha256(bytes), input.path)
   }
-  assert.ok(info.inputs.some(input => input.path === 'src/main.mjs'))
+  assert.ok(info.inputs.some(input => input.path === 'src/qiankun-entry.mjs'))
   assert.ok(!info.inputs.some(input => input.path.includes('vue.global')))
   assert.equal(info.packageLockSha256, sha256(readFileSync(path.join(appRoot, 'package-lock.json'))))
-  assert.equal(manifest['index.html'].isEntry, true)
-  assert.equal(manifest['index.html'].file, info.entry)
-  assert.deepEqual(manifest['index.html'].dynamicImports.map(key => manifest[key].file).sort(), info.dynamicChunks)
-  assert.ok(info.dynamicChunks.length > 0, 'an actual deferred application is emitted')
+  assert.equal(manifest['src/qiankun-entry.mjs'].isEntry, true)
+  assert.equal(manifest['src/qiankun-entry.mjs'].file, info.entry)
+  assert.deepEqual(info.dynamicChunks, [])
   const html = readFileSync(path.join(result.output, 'index.html'), 'utf8')
-  assert.match(html, /<script type="module"[^>]*src="\.\/assets\//)
-  assert.match(html, /src="\.\/assets\/iframe-bridge\.js"/)
-  assert.match(html, /src="\.\/assets\/config\.js"/)
+  assert.match(html, /<script entry src="\.\/assets\/micro-app\.umd\.js"/)
+  assert.match(html, /<link rel="stylesheet" href="\.\/micro-app\.css"/)
+  assert.doesNotMatch(html, /type="module"|iframe-bridge|assets\/config/)
   assert.doesNotMatch(html, /vue\.global|src="\/|href="\//)
   const entry = readFileSync(path.join(result.output, info.entry), 'utf8')
-  assert.match(entry, /import\((["'`])\.\/app-[^"'`]+\.js\1\)/)
+  assert.doesNotMatch(entry, /\bimport\s*\(/)
   for (const record of Object.values(manifest)) {
     for (const resource of [record.file, ...(record.css || [])]) {
-      assert.ok(resource.startsWith('assets/') && !resource.includes('..'))
+      assert.ok(!resource.startsWith('/') && !resource.includes('..'))
       const source = readFileSync(path.join(result.output, resource), 'utf8')
       assert.ok(!source.includes(secret), 'private environment values are absent')
       assert.doesNotMatch(source, /window\.Vue/)
     }
   }
-  const config = readFileSync(path.join(result.output, 'assets/config.js'), 'utf8')
-  assert.ok(!config.includes(secret))
-  assert.match(config, /"apiBase":"\/work-orders-api"/)
-  assert.equal(readFileSync(path.join(result.output, 'assets/iframe-bridge.js'), 'utf8'), readFileSync(path.join(appRoot, 'vendor/iframe-bridge.js'), 'utf8'))
+  assert.ok(!entry.includes(secret))
+  assert.equal(existsSync(path.join(result.output, 'assets/iframe-bridge.js')), false)
+  assert.equal(existsSync(path.join(result.output, 'assets/config.js')), false)
   assert.equal(existsSync(path.join(result.output, 'assets/vue.global.prod.js')), false)
 })
 

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
+import { readFile } from 'node:fs/promises'
 import {
   ACTIONS, API, accepted, call, createTicket, denied,
   grantFor, identity, matrix, records, replaceGrant, testDatabaseUrl,
@@ -473,9 +474,16 @@ test('real PG + HTTP platform fixture: strict input, Unicode limits and valid di
 
   await t.test('production migrations are idempotent and persistent identity cannot be moved by SQL', async () => {
     const { migrate } = await import('../db.mjs')
+    const history = () => h.query('SELECT version,checksum,applied_at::text AS applied_at FROM work_order_migrations ORDER BY version')
+    const before = (await history()).rows
+    const expectedFiles = ['0001_work_orders.sql', '0002_create_idempotency.sql', '0003_reminder_intents.sql']
+    assert.deepEqual(before.map(row => row.version), expectedFiles)
+    for (const row of before) {
+      const bytes = await readFile(new URL('../migrations/' + row.version, import.meta.url))
+      assert.equal(row.checksum, createHash('sha256').update(bytes).digest('hex'), row.version)
+    }
     await migrate(h.pool)
-    const migrationCount = await h.query('SELECT count(*)::integer AS count FROM work_order_migrations')
-    assert.equal(migrationCount.rows[0].count, 1)
+    assert.deepEqual((await history()).rows, before, 're-running migrations must preserve every checksum and application timestamp')
     const row = h.tickets.ownRoot
     for (const [column, value] of [['tenant_id', h.tenantB], ['organization_id', h.child], ['owner_user_id', h.actors.other.actor.userId]]) {
       await assert.rejects(h.query(`UPDATE work_orders SET ${column}=$2 WHERE id=$1`, [row.id, value]), /23514/)
@@ -613,21 +621,21 @@ test('real PG + HTTP platform fixture: protocol binding and upstream transport f
     await accepted(h.url, actor.token, 'GET', API)
   })
 
-  await t.test('sandbox iframe origin is explicit and CORS does not substitute for token authentication', async () => {
+  await t.test('qiankun host origin is explicit and CORS does not substitute for token authentication', async () => {
     const before = actor.state.calls.introspect
     const preflight = await call(h.url, '', 'OPTIONS', API, undefined, { headers: {
-      origin: 'null', 'access-control-request-method': 'PATCH', 'access-control-request-headers': 'authorization,content-type,x-request-id',
+      origin: 'https://platform.example.test', 'access-control-request-method': 'PATCH', 'access-control-request-headers': 'authorization,content-type,x-request-id',
     } })
     assert.equal(preflight.status, 204)
-    assert.equal(preflight.headers.get('access-control-allow-origin'), 'null')
+    assert.equal(preflight.headers.get('access-control-allow-origin'), 'https://platform.example.test')
     assert.match(preflight.headers.get('access-control-allow-headers'), /x-request-id/i)
     assert.match(preflight.headers.get('access-control-expose-headers'), /x-request-id/i)
     assert.equal(preflight.headers.get('access-control-allow-credentials'), null)
     assert.equal(actor.state.calls.introspect, before, 'preflight attempted bearer-token authorization')
-    const authenticated = await call(h.url, actor.token, 'GET', API, undefined, { headers: { origin: 'null' } })
+    const authenticated = await call(h.url, actor.token, 'GET', API, undefined, { headers: { origin: 'https://platform.example.test' } })
     assert.equal(authenticated.status, 200)
-    assert.equal(authenticated.headers.get('access-control-allow-origin'), 'null')
-    const missing = await call(h.url, '', 'GET', API, undefined, { headers: { origin: 'null' } })
+    assert.equal(authenticated.headers.get('access-control-allow-origin'), 'https://platform.example.test')
+    const missing = await call(h.url, '', 'GET', API, undefined, { headers: { origin: 'https://platform.example.test' } })
     assert.equal(missing.status, 401)
     const unexpectedOrigin = await call(h.url, actor.token, 'GET', API, undefined, { headers: { origin: 'https://unapproved.example.test' } })
     assert.equal(unexpectedOrigin.status, 403)

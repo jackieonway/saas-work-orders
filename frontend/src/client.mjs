@@ -1,5 +1,5 @@
 import { validContext, validIdempotencyKey, MAX_BYTES, PRIORITIES, STATUSES } from './domain.mjs'
-import { SDK_VERSION, MicroSdkError, requestWithContext, authorizationContextSignature, assertSupportedSdkVersion } from '../vendor/micro-sdk.mjs'
+import { SDK_VERSION, MicroSdkError, requestWithContext, authorizationContextSignature, assertSupportedSdkVersion } from '../vendor/micro-sdk/index.mjs'
 
 export class BusinessError extends Error {
   constructor(status, message, code = '', kind = 'HTTP', requestId) {

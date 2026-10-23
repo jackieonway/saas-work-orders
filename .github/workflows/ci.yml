@@ -18,6 +18,8 @@ jobs:
       - run: node --test ../.github/tests/repository-structure.mjs
       - run: npm ci --ignore-scripts --no-audit --no-fund
       - run: npm run build -- --allowed-host-origin https://platform.example.com
+      - name: Verify actual qiankun UMD release and current source fingerprints
+        run: npm run release:check -- dist
       - run: npm test
   backend:
     runs-on: ubuntu-24.04
@@ -26,10 +28,20 @@ jobs:
         working-directory: backend
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: frontend/.nvmrc
+      - run: npm install --global npm@11.16.0
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npm test
       - run: rustup toolchain install 1.97.0 --profile minimal --component rustfmt --component clippy
       - run: cargo fmt --all -- --check
       - run: cargo check --locked --all-targets
       - run: cargo test --locked --lib
+      - name: Verify the optional owned Node HTTP fixture
+        run: cargo test --locked --lib -- --test-threads=1
+        env:
+          WORK_ORDERS_TEST_NODE: node
       - run: cargo clippy --locked --all-targets -- -D warnings
 
   images:

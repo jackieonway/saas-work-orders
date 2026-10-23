@@ -3,6 +3,9 @@
 mod client;
 mod policy;
 
+#[cfg(test)]
+mod node_fixture;
+
 use std::{
     sync::Arc,
     time::{Duration, Instant},

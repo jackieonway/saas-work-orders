@@ -1,4 +1,4 @@
-/* Generated SaaS Micro SDK 1.0.0; source: examples/micro-app-sdk/release.json */
+/* Generated SaaS Micro SDK 2.0.0; source: examples/micro-app-sdk/release.json */
 (() => {
   var __defProp = Object.defineProperty;
   var __export = (target, all) => {
@@ -12,7 +12,6 @@
     CONTEXT_CONTRACT_VERSION: () => CONTEXT_CONTRACT_VERSION,
     DEFAULT_MAX_JSON_RESPONSE_BYTES: () => DEFAULT_MAX_JSON_RESPONSE_BYTES,
     DEFAULT_MAX_RESPONSE_BYTES: () => DEFAULT_MAX_RESPONSE_BYTES,
-    IFRAME_PROTOCOL_VERSION: () => IFRAME_PROTOCOL_VERSION,
     MAX_HTTP_RESPONSE_BYTES: () => MAX_HTTP_RESPONSE_BYTES,
     MAX_ORGANIZATION_SCOPE_IDS: () => MAX_ORGANIZATION_SCOPE_IDS,
     MAX_RESPONSE_BYTES: () => MAX_RESPONSE_BYTES,
@@ -27,22 +26,20 @@
     createContextClient: () => createContextClient,
     createNotificationPublisher: () => createNotificationPublisher,
     detectBrowserCapabilities: () => detectBrowserCapabilities,
-    installIframeBridge: () => installIframeBridge,
     isSupportedSdkVersion: () => isSupportedSdkVersion,
     requestWithContext: () => requestWithContext,
     sameAuthorizationContext: () => sameAuthorizationContext
   });
 
   // canonical-sdk:sdk-protocol
-  var SDK_VERSION = "1.0.0";
+  var SDK_VERSION = "2.0.0";
   var CONTEXT_CONTRACT_VERSION = "1.0";
   var MICRO_PROPS_CONTRACT_VERSION = "2.0";
-  var IFRAME_PROTOCOL_VERSION = "2.0";
   var NOTIFICATION_CONTRACT_VERSION = "1.0";
   var DEFAULT_MAX_JSON_RESPONSE_BYTES = 1048576;
   var MAX_HTTP_RESPONSE_BYTES = 4194304;
   var MAX_ORGANIZATION_SCOPE_IDS = 1e4;
-  var SUPPORTED_SDK_VERSIONS = Object.freeze(["1.0.0"]);
+  var SUPPORTED_SDK_VERSIONS = Object.freeze(["2.0.0"]);
   function isSupportedSdkVersion(value) {
     return typeof value === "string" && SUPPORTED_SDK_VERSIONS.includes(value);
   }
@@ -253,26 +250,7 @@
     ["crypto.randomUUID", (env) => typeof env.crypto?.randomUUID === "function"]
   ]);
   var modeChecks = Object.freeze({
-    client: clientChecks,
-    iframe: Object.freeze([
-      ...clientChecks,
-      ["MessageChannel", (env) => typeof env.MessageChannel === "function"],
-      ["postMessage", (env) => typeof env.postMessage === "function"],
-      ["addEventListener", (env) => typeof env.addEventListener === "function"],
-      ["removeEventListener", (env) => typeof env.removeEventListener === "function"]
-    ]),
-    host: Object.freeze([
-      ...clientChecks,
-      ["AbortSignal.any", (env) => typeof env.AbortSignal?.any === "function"],
-      ["AbortSignal.timeout", (env) => typeof env.AbortSignal?.timeout === "function"],
-      ["MessageChannel", (env) => typeof env.MessageChannel === "function"],
-      ["MutationObserver", (env) => typeof env.MutationObserver === "function"],
-      ["iframe.sandbox", (env) => typeof env.HTMLIFrameElement === "function" && "sandbox" in env.HTMLIFrameElement.prototype],
-      ["document.createElement", (env) => typeof env.document?.createElement === "function"],
-      ["Blob", (env) => typeof env.Blob === "function"],
-      ["URL.createObjectURL", (env) => typeof env.URL?.createObjectURL === "function"],
-      ["URL.revokeObjectURL", (env) => typeof env.URL?.revokeObjectURL === "function"]
-    ])
+    client: clientChecks
   });
   function detectBrowserCapabilities(mode = "client", environment = globalThis) {
     if (!Object.hasOwn(modeChecks, mode)) throw new TypeError("Unsupported SDK capability mode");
@@ -444,261 +422,6 @@
     };
   }
 
-  // examples/micro-app-sdk/src/iframe-bridge.js
-  function installIframeBridge(global) {
-    "use strict";
-    var VERSION = IFRAME_PROTOCOL_VERSION;
-    var variants = ["default", "success", "error", "warning", "info"];
-    function abortError() {
-      return new DOMException("Application context cancelled or expired", "AbortError");
-    }
-    function connect(options) {
-      assertBrowserCapabilities("iframe", global);
-      try {
-        if (options?.sdkVersion !== void 0) assertSupportedSdkVersion(options.sdkVersion);
-      } catch {
-        throw protocolError("UNSUPPORTED_SDK_VERSION");
-      }
-      if (!options || typeof options.appCode !== "string" || !options.appCode || !Array.isArray(options.allowedHostOrigins) || options.allowedHostOrigins.length === 0 || !options.lifecycle || typeof options.lifecycle.mount !== "function" || typeof options.lifecycle.unmount !== "function") {
-        throw new Error("MicroIframe requires appCode, explicit allowedHostOrigins and mount/unmount lifecycle");
-      }
-      var origins = options.allowedHostOrigins.map(function(origin) {
-        var url = new URL(origin);
-        if (!/^https?:$/.test(url.protocol) || origin !== url.origin) throw new Error("allowedHostOrigins must contain exact HTTP(S) origins");
-        return origin;
-      });
-      var lifecycle = options.lifecycle;
-      var container = options.container || document.body;
-      var port = null, nonce = null, context = null, authorizationKey = null, sequence = 0, mounted = false, stopped = false;
-      var expiryTimer = null, chain = Promise.resolve();
-      var nextDownload = 0, pendingDownloads = /* @__PURE__ */ new Map();
-      function settleDownload(id, error) {
-        var pending = pendingDownloads.get(id);
-        if (!pending) return;
-        pendingDownloads.delete(id);
-        clearTimeout(pending.timer);
-        pending.snapshot.signal.removeEventListener("abort", pending.abort);
-        if (error) pending.reject(error);
-        else pending.resolve();
-      }
-      function usable(snapshot) {
-        return !stopped && context && snapshot && context.controller === snapshot.controller && !snapshot.signal.aborted && Date.parse(snapshot.expiresAt) > Date.now() && Date.parse(snapshot.tokenExpiresAt) > Date.now();
-      }
-      function send(kind, epoch, extra) {
-        if (port && !stopped) port.postMessage(Object.assign({ kind, nonce, contextEpoch: epoch }, extra));
-      }
-      function abortContext() {
-        if (context) context.controller.abort();
-        pendingDownloads.forEach(function(_, id) {
-          settleDownload(id, abortError());
-        });
-        if (expiryTimer !== null) clearTimeout(expiryTimer);
-        expiryTimer = null;
-      }
-      function dispose() {
-        if (stopped) return;
-        stopped = true;
-        sequence++;
-        abortContext();
-        context = null;
-        global.removeEventListener("message", receiveConnect);
-        global.removeEventListener("pagehide", dispose);
-        if (port) {
-          port.onmessage = null;
-          port.onmessageerror = null;
-          port.close();
-          port = null;
-        }
-        chain = chain.catch(function() {
-        }).then(function() {
-          if (mounted) {
-            mounted = false;
-            return lifecycle.unmount();
-          }
-        }).catch(function() {
-        });
-      }
-      function hydrate(dto) {
-        if (context && Number.isSafeInteger(dto?.contextEpoch) && dto.contextEpoch < context.contextEpoch) return null;
-        try {
-          if (dto?.sdkVersion !== void 0) assertSupportedSdkVersion(dto.sdkVersion);
-        } catch {
-          abortContext();
-          return null;
-        }
-        var expiry = dto && Math.min(Date.parse(dto.expiresAt), Date.parse(dto.tokenExpiresAt));
-        if (!dto || dto.contractVersion !== VERSION || dto.appCode !== options.appCode || dto.basePath !== "/micro/" + options.appCode || !Number.isSafeInteger(dto.contextEpoch) || dto.contextEpoch <= 0 || !dto.contextVersion || typeof dto.token !== "string" || !dto.token || !Number.isFinite(expiry) || expiry <= Date.now() || !dto.user || !dto.user.id || !dto.tenant || !dto.tenant.id || !dto.organization || !dto.organization.id || context && dto.contextEpoch < context.contextEpoch) {
-          abortContext();
-          return null;
-        }
-        var nextKey = authorizationContextSignature(dto);
-        var reuse = usable(context) && nextKey !== null && nextKey === authorizationKey && (typeof lifecycle.update === "function" || context.routePath === dto.routePath);
-        if (!reuse) abortContext();
-        var controller = reuse ? context.controller : new AbortController();
-        var snapshot = Object.assign({}, dto, { signal: controller.signal });
-        Object.defineProperty(snapshot, "controller", { value: controller, enumerable: false });
-        snapshot.onNavigate = function(path) {
-          if (usable(snapshot) && typeof path === "string") send("MICRO_NAVIGATE", snapshot.contextEpoch, { path });
-        };
-        snapshot.onNotify = function(message, variant) {
-          variant = variant === void 0 ? "default" : variant;
-          if (usable(snapshot) && typeof message === "string" && message.length > 0 && message.length <= 1e3 && variants.indexOf(variant) >= 0) {
-            send("MICRO_NOTIFY", snapshot.contextEpoch, { message, variant });
-          }
-        };
-        context = snapshot;
-        authorizationKey = nextKey;
-        if (!reuse) expiryTimer = setTimeout(function() {
-          if (context && context.controller === controller) abortContext();
-        }, Math.max(1, expiry - Date.now()));
-        return snapshot;
-      }
-      function receive(event) {
-        var data = event.data;
-        if (stopped || !data || typeof data !== "object" || data.nonce !== nonce || !Number.isSafeInteger(data.contextEpoch)) return;
-        if (data.kind === "MICRO_DOWNLOAD_RESULT") {
-          var pending = pendingDownloads.get(data.requestId);
-          if (pending && usable(pending.snapshot) && data.contextEpoch === pending.snapshot.contextEpoch) {
-            settleDownload(data.requestId, data.ok === true ? void 0 : new Error("CSV download denied"));
-          }
-          return;
-        }
-        if (data.kind === "MICRO_UNMOUNT") {
-          if (!context || data.contextEpoch === context.contextEpoch) dispose();
-          return;
-        }
-        if (data.kind === "MICRO_CONTEXT_ABORT") {
-          if (context && data.contextEpoch === context.contextEpoch) {
-            sequence++;
-            abortContext();
-          }
-          return;
-        }
-        if (data.kind !== "MICRO_MOUNT" && data.kind !== "MICRO_UPDATE" || !Number.isSafeInteger(data.requestId) || data.requestId <= 0 || data.props?.contextEpoch !== data.contextEpoch) return;
-        var previous = context;
-        var snapshot = hydrate(data.props);
-        if (!snapshot) {
-          send("MICRO_ERROR", data.contextEpoch, { requestId: data.requestId, code: "INVALID_CONTEXT" });
-          return;
-        }
-        var taskSequence = ++sequence;
-        chain = chain.catch(function() {
-        }).then(async function() {
-          if (!usable(snapshot) || taskSequence !== sequence) return;
-          try {
-            if (!mounted) {
-              mounted = true;
-              await lifecycle.mount(container, snapshot);
-            } else if (typeof lifecycle.update === "function") await lifecycle.update(snapshot);
-            else if (!previous || previous.controller !== snapshot.controller || previous.routePath !== snapshot.routePath) {
-              mounted = false;
-              await lifecycle.unmount();
-              if (!usable(snapshot) || taskSequence !== sequence) return;
-              mounted = true;
-              await lifecycle.mount(container, snapshot);
-            }
-            if (usable(snapshot) && taskSequence === sequence) send("MICRO_ACK", snapshot.contextEpoch, { requestId: data.requestId });
-          } catch (_) {
-            if (usable(snapshot) && taskSequence === sequence) send(
-              "MICRO_ERROR",
-              snapshot.contextEpoch,
-              { requestId: data.requestId, code: "LIFECYCLE_FAILED" }
-            );
-          }
-        });
-      }
-      function receiveConnect(event) {
-        var data = event.data;
-        if (stopped || port || event.source !== global.parent || origins.indexOf(event.origin) < 0 || !data || data.kind !== "MICRO_CONNECT" || data.appCode !== options.appCode || data.contractVersion !== VERSION || typeof data.nonce !== "string" || !/^[a-zA-Z0-9-]{16,128}$/.test(data.nonce) || !Number.isSafeInteger(data.contextEpoch) || data.contextEpoch <= 0 || event.ports.length !== 1 || typeof event.ports[0].postMessage !== "function") return;
-        if (data.sdkVersion !== void 0) {
-          try {
-            assertSupportedSdkVersion(data.sdkVersion);
-          } catch {
-            event.ports[0].postMessage({ kind: "MICRO_ERROR", nonce: data.nonce, contextEpoch: data.contextEpoch, code: "UNSUPPORTED_SDK_VERSION" });
-            event.ports[0].close();
-            return;
-          }
-        }
-        nonce = data.nonce;
-        port = event.ports[0];
-        global.removeEventListener("message", receiveConnect);
-        port.onmessage = receive;
-        port.onmessageerror = dispose;
-        port.start();
-        send("MICRO_READY", data.contextEpoch, { appCode: options.appCode, contractVersion: VERSION, sdkVersion: SDK_VERSION });
-      }
-      global.addEventListener("message", receiveConnect);
-      global.addEventListener("pagehide", dispose, { once: true });
-      return {
-        sdkVersion: SDK_VERSION,
-        dispose,
-        current: function() {
-          return usable(context) ? context : null;
-        },
-        /** 只有当前资源的 export 功能权限与数据 grant 都允许时，宿主才发起 CSV 下载。 */
-        downloadCsv: function(file) {
-          var snapshot = context;
-          if (!usable(snapshot)) return Promise.reject(abortError());
-          if (!file || typeof file.resource !== "string" || typeof file.filename !== "string" || typeof file.content !== "string" || file.content.length > 4 * 1024 * 1024 || new TextEncoder().encode(file.content).byteLength > 4 * 1024 * 1024) {
-            return Promise.reject(new Error("Invalid CSV download"));
-          }
-          if (pendingDownloads.size >= 4) return Promise.reject(new Error("Too many pending CSV downloads"));
-          var id = ++nextDownload;
-          return new Promise(function(resolve, reject) {
-            var abort = function() {
-              settleDownload(id, abortError());
-            };
-            var timer = setTimeout(function() {
-              settleDownload(id, new Error("CSV download timed out"));
-            }, 15e3);
-            pendingDownloads.set(id, { snapshot, resolve, reject, abort, timer });
-            snapshot.signal.addEventListener("abort", abort, { once: true });
-            if (!usable(snapshot)) {
-              abort();
-              return;
-            }
-            send("MICRO_DOWNLOAD", snapshot.contextEpoch, {
-              requestId: id,
-              resource: file.resource,
-              filename: file.filename,
-              content: file.content
-            });
-          });
-        },
-        /** 应用业务 fetch 必须用此 helper 或直接绑定 props.signal，并校验响应仍属当前 context。 */
-        requestJson: async function(url, requestOptions) {
-          var snapshot = context;
-          if (!usable(snapshot)) throw abortError();
-          requestOptions = requestOptions || {};
-          var request = new AbortController();
-          var abort = function() {
-            request.abort();
-          };
-          snapshot.signal.addEventListener("abort", abort, { once: true });
-          if (requestOptions.signal) requestOptions.signal.addEventListener("abort", abort, { once: true });
-          if (snapshot.signal.aborted || requestOptions.signal?.aborted) abort();
-          var check = function() {
-            if (!usable(snapshot) || request.signal.aborted) throw abortError();
-          };
-          try {
-            return await requestWithContext({
-              props: snapshot,
-              url,
-              options: Object.assign({}, requestOptions, { signal: request.signal }),
-              fetchImpl: global.fetch,
-              check
-            });
-          } finally {
-            snapshot.signal.removeEventListener("abort", abort);
-            if (requestOptions.signal) requestOptions.signal.removeEventListener("abort", abort);
-          }
-        }
-      };
-    }
-    global.MicroIframe = Object.freeze({ connect, contractVersion: VERSION, sdkVersion: SDK_VERSION });
-  }
-
   // examples/micro-app-sdk/src/classic-entry.mjs
   window.MicroSdk = Object.freeze({ ...index_exports, sdkVersion: SDK_VERSION });
-  installIframeBridge(window);
 })();

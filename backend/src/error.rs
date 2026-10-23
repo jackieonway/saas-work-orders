@@ -38,7 +38,7 @@ impl fmt::Display for ConfigError {
             Self::PlatformOrigin => f.write_str("PLATFORM_API_ORIGIN must be an exact HTTPS origin (development permits loopback HTTP)"),
             Self::PlatformClientId => f.write_str("PLATFORM_CLIENT_ID must identify the confidential application client"),
             Self::PlatformClientSecret => f.write_str("PLATFORM_CLIENT_SECRET must contain a valid confidential client secret"),
-            Self::AllowedOrigin => f.write_str("WORK_ORDERS_ALLOWED_ORIGINS must contain exact allowed origins or null"),
+            Self::AllowedOrigin => f.write_str("WORK_ORDERS_ALLOWED_ORIGINS must contain exact HTTP(S) host origins; opaque null and wildcards are forbidden"),
             Self::PlatformCa => f.write_str("PLATFORM_CA_CERT_FILE must identify a valid PEM certificate file"),
             Self::Number(name) => write!(f, "{name} must be an integer within its documented bounds"),
         }

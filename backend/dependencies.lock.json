@@ -2,21 +2,39 @@
   "schemaVersion": 1,
   "sourceRepository": "rust-saas",
   "sourceRevision": "120c211587460f391cf30db73350188ee4ab1882",
-  "sdkVersion": "1.0.0",
+  "sdkVersion": "2.0.0",
   "files": {
     "backend/vendor/operational-telemetry/Cargo.lock": "2e3b612bc2ba42434b7ddbc32446442657356364a6083b951a3c5f16ae4cdf9a",
     "backend/vendor/operational-telemetry/Cargo.toml": "9f3b14ff00778e84b66b085ba9aa1b56f97b742f68c6c5a00ef15cf9722b5818",
     "backend/vendor/operational-telemetry/src/lib.rs": "ae4fa26581d616e9301a5ed167dcea1a56c50a224e29a6c068a4248b7ec3900c",
-    "frontend/vendor/iframe-bridge.js": "16434ed209846c1e41f3d74f22654027289e44caf26e4d77fe1aeb0146b03ee5",
-    "frontend/vendor/micro-sdk.mjs": "2365b2c6cf6be201d930ae6ca1010bd59ce3f7fa4ab6a0df965189529f43c837",
     "frontend/vendor/vue.global.prod.js": "b72394052eef1eeda1752db3758ce1be6f88016903f22e5241cc732ea307478e",
     "frontend/vendor/vue.LICENSE.txt": "ea4239d56944b8a5881124cf2804b95ba2bf2cb98029623b1858722bbc5b0e3e",
-    "backend/manifests/bootstrap.manifest.json": "66ab88154f7d7f1a364420550076085b2a3d43967c013bd27719b382ee21c91c",
+    "backend/manifests/bootstrap.manifest.json": "e80201af744ed32b1f3f8ad9d016354385f5c2da078b4966580c0fd3caa455be",
     "frontend/deploy/build-static.mjs": "ed18e010960ccd64a655665f29405a0ae6fb89ef9fdda33bab18aff7e6355503",
     "frontend/deploy/gateway-policy.mjs": "3fdd1d69f7898706f34a5faadfc22e6356a57fc8ddabcf5d505ea6729d00c5cc",
     "backend/manifests/grants.manifest.example.json": "d281fa3a0cc107eb51e33e56fda0c8f2b101c9c6c89a76db15dde89bda6d2e63",
-    "frontend/deploy/render-static.mjs": "226f7a44df10c8f164ac6a0bd4ac684ee0e50795ad51b77081ad86c2402231ae"
+    "frontend/deploy/render-static.mjs": "226f7a44df10c8f164ac6a0bd4ac684ee0e50795ad51b77081ad86c2402231ae",
+    "frontend/vendor/micro-sdk/artifact-manifest.json": "2e6007209f63dba709157eb6cd37ef7c4961c679e10b2dbbfad6690836143c3c",
+    "frontend/vendor/micro-sdk/capabilities.d.mts": "4d68d6b325cca39df0312eae9eb6efb7affa55763efe0bbb52f6c30aaeccd6af",
+    "frontend/vendor/micro-sdk/http.d.mts": "82c41e76d47c873dd1209b831d482b8521ace0586167083b5e7eef0b96b36c3f",
+    "frontend/vendor/micro-sdk/index.d.mts": "9562bfba60aef34811e2c98e59bfef715ef29966d8a4c9493deac77bf351fe10",
+    "frontend/vendor/micro-sdk/index.d.ts": "9562bfba60aef34811e2c98e59bfef715ef29966d8a4c9493deac77bf351fe10",
+    "frontend/vendor/micro-sdk/index.mjs": "fc8080c2e6d01c262788a3f48232cb2659a558f635ebef7d8991ae8738f443ce",
+    "frontend/vendor/micro-sdk/package.json": "038f282ef3696abce27e1e61a3f7e7745a378dca9d79123cff8d114ae22b5f63",
+    "frontend/vendor/micro-sdk/protocol.d.mts": "dcbebdd3d10afc24e534fe10f7905c0eb684f31673c08980cc5146b5f01b0b63",
+    "frontend/vendor/micro-sdk/protocol.mjs": "68e7f2f185315766dceb2a8c9113fc37aab1b720e11395f05b4d7202652a3fde",
+    "frontend/vendor/micro-sdk/protocol.rs": "6613cf9825e27b89ccd5fc095bee3f974c34f78103df0d43cebf7b51944c42ca",
+    "frontend/vendor/micro-sdk/schema.json": "7205dc0edccb87e69c13e0d0160bdf4f6ff662c7eb7487873139d0b5f5c9f4ce",
+    "frontend/vendor/micro-sdk/sdk.js": "3c1545da8ac535dd3a7a2fd619bcd2994977b8711a06a625fa661dda13ebb4df",
+    "frontend/vendor/micro-sdk/SOURCE.json": "8a7d6bbc79d1a7f28cd4ed163f6d095147a88932be247c70e8e05a7dd1c90ed6",
+    "frontend/vendor/micro-sdk/types.d.ts": "be11099106fcb960cfbbe29c462a600ff4e066225d9e49318607858f1875ea5b"
   },
   "layout": "frontend-backend",
-  "layoutAdaptation": "Deployment helper paths are adapted for independent frontend and backend contexts; upstream SDK and telemetry bytes are unchanged."
+  "layoutAdaptation": "Deployment helper paths are adapted for independent frontend and backend contexts. Existing telemetry, Vue and deployment helper digests are unchanged; SDK 2.0.0 is pinned from the recorded working tree with per-file digests.",
+  "sdkSource": {
+    "sourceRepository": "saas-micro-app-sdk",
+    "sourceRevision": "7dd1b57d01ecb2e2892728031364384b5b7439a6",
+    "workingTree": true,
+    "sourceDirectory": "releases/2.0.0"
+  }
 }

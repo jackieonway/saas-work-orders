@@ -9,7 +9,9 @@ import { build } from 'vite'
 // handlers. These controlled HTTP replies are not service or browser acceptance.
 const bundle = await build({ configFile: false, logLevel: 'silent', build: { write: false,
   lib: { entry: fileURLToPath(new URL('../src/app.mjs', import.meta.url)), name: 'UnitApp', formats: ['iife'] },
-  rolldownOptions: { external: ['vue'], output: { globals: { vue: '__UNIT_VUE__' } } } } })
+  rolldownOptions: { external: ['vue'], output: { globals: { vue: '__UNIT_VUE__' } } } },
+  define: { __QIANKUN_PUBLIC_CONFIG__: JSON.stringify({ version: 'unit-fixture', allowedHostOrigins: ['https://host.test'], apiBase: '/work-orders-api' }) },
+})
 const appCode = (Array.isArray(bundle) ? bundle.flatMap(result => result.output) : bundle.output).find(file => file.type === 'chunk').code
 
 const deferred = () => { let resolve; const promise = new Promise((done) => { resolve = done }); return { promise, resolve } }
@@ -53,10 +55,12 @@ async function settle() { for (let count = 0; count < 3; count++) await new Prom
 
 function harness(rows = [ticket()]) {
   let render, lifecycle, state
-  const requests = [], responses = [], failures = [], container = { textContent: '' }
+  const requests = [], responses = [], failures = []
+  const container = { textContent: '', dataset: {}, setAttribute() {}, querySelector: () => ({ focus() {} }) }
+  const hostTheme = { theme: 'platform-theme' }
   const vue = { h, reactive: (value) => { state = value; return value }, nextTick: (callback) => Promise.resolve().then(callback),
     createApp: (component) => ({ mount() { render = component.render; render() }, unmount() { render = null } }) }
-  const browser = { __WORK_ORDERS_CONFIG__: { version: 'unit-fixture', allowedHostOrigins: ['https://host.test'], apiBase: '/work-orders-api' } }
+  const browser = {}
   const fetch = async (url, options) => {
     const request = { url: new URL(url, 'https://app.test'), method: options.method, body: options.body ? JSON.parse(options.body) : undefined,
       signal: options.signal, headers: options.headers }
@@ -73,13 +77,13 @@ function harness(rows = [ticket()]) {
     return reply(500, { message: '未配置此单元测试响应' })
   }
   const scope = { __UNIT_VUE__: vue, window: browser, document: { querySelector: (selector) => selector === '#app' ? container : { focus() {} },
-    documentElement: { dataset: {} } }, fetch, AbortController, DOMException, Headers, TextEncoder, TextDecoder, URLSearchParams, Uint8Array,
+    documentElement: { dataset: hostTheme } }, fetch, AbortController, DOMException, Headers, TextEncoder, TextDecoder, URLSearchParams, Uint8Array,
     crypto: webcrypto, console }
   vm.runInNewContext(appCode, scope, { filename: 'actual-work-orders-unit-bundle.js' })
   assert.equal(typeof scope.UnitApp?.createLifecycle, 'function', 'actual UI chunk exports its lifecycle factory')
   lifecycle = scope.UnitApp.createLifecycle({ downloadCsv: async () => {} })
   const api = {
-    get state() { return state }, requests, failures,
+    get state() { return state }, requests, failures, container, hostTheme,
     enqueue(method, path, response) { responses.push({ method, path: '/work-orders-api' + path, response }) },
     tree() { return render() },
     nodes(testId) { return [...walk(render())].filter((node) => node.props['data-testid'] === testId) },
@@ -146,6 +150,8 @@ test('actual app unit: theme updates retain a pending submit and do not reload c
   const write = app.requests.find(request => request.method === 'POST')
   const reads = app.requests.filter(request => request.method === 'GET' && request.url.pathname.endsWith('/tickets')).length
   await app.update({ ...initial, theme: 'dark' })
+  assert.equal(app.container.dataset.theme, 'dark')
+  assert.equal(app.hostTheme.theme, 'platform-theme')
   assert.equal(write.signal.aborted, false)
   assert.equal(app.state.busy.save, true)
   assert.equal(app.requests.filter(request => request.method === 'GET' && request.url.pathname.endsWith('/tickets')).length, reads)

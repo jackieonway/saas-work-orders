@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 # Build from the frontend directory. The driver validates APP_CODE before build.
-ARG NODE_IMAGE=node:24.18.0-alpine
+ARG NODE_IMAGE=node:24.22.1-alpine
 ARG STATIC_IMAGE=nginxinc/nginx-unprivileged:1.28.0-alpine
 FROM ${NODE_IMAGE} AS build
 ARG APP_CODE

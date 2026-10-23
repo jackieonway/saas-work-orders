@@ -7,6 +7,7 @@ const fixtureEnv = (patch = {}) => ({
   PLATFORM_API_ORIGIN: 'https://platform.example.test', PLATFORM_CLIENT_ID: 'work-orders-server',
   PLATFORM_CLIENT_SECRET: 'config-fixture-only-secret',
   METRICS_TOKEN: 'FixtureOnlyMetricsToken0123456789AbCd',
+  WORK_ORDERS_ALLOWED_ORIGINS: 'https://platform.example.test',
   ...patch,
 })
 
@@ -38,9 +39,17 @@ test('work-order config refuses missing credentials, unsafe bind values and inva
     { WORK_ORDERS_HOST: 'unsafe/host' }, { WORK_ORDERS_PORT: '65536' }, { NODE_ENV: 'production', WORK_ORDERS_PORT: '0' },
     { NODE_ENV: 'production', WORK_ORDERS_ALLOWED_ORIGINS: 'http://outside.example.test' },
   ]) assert.throws(() => loadConfig(fixtureEnv(patch)))
-  const safe = loadConfig(fixtureEnv({ WORK_ORDERS_PORT: '0', WORK_ORDERS_ALLOWED_ORIGINS: 'null,https://host.example.test,null' }))
+  const safe = loadConfig(fixtureEnv({ WORK_ORDERS_PORT: '0', WORK_ORDERS_ALLOWED_ORIGINS: 'https://host.example.test,https://host.example.test' }))
   assert.equal(safe.port, 0)
-  assert.deepEqual(safe.allowedOrigins, ['null', 'https://host.example.test'])
+  assert.deepEqual(safe.allowedOrigins, ['https://host.example.test'])
+})
+
+test('qiankun CORS requires explicit exact host origins and rejects missing configuration', () => {
+  assert.throws(() => loadConfig(fixtureEnv({ WORK_ORDERS_ALLOWED_ORIGINS: undefined })), /WORK_ORDERS_ALLOWED_ORIGINS/)
+  for (const value of ['', 'null', '*', 'https://host.example.test,null', 'https://host.example.test/', 'https://host.example.test,']) {
+    assert.throws(() => loadConfig(fixtureEnv({ WORK_ORDERS_ALLOWED_ORIGINS: value })), /WORK_ORDERS_ALLOWED_ORIGINS/)
+  }
+  assert.deepEqual(loadConfig(fixtureEnv({ WORK_ORDERS_ALLOWED_ORIGINS: 'http://127.0.0.1:3000' })).allowedOrigins, ['http://127.0.0.1:3000'])
 })
 
 test('production metrics require a strong independent token; development absent metrics remain closed', () => {

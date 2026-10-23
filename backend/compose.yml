@@ -21,7 +21,7 @@ services:
       WORK_ORDERS_HOST: 0.0.0.0
       WORK_ORDERS_PORT: '3004'
       WORK_ORDERS_DATABASE_URL: ${WORK_ORDERS_DATABASE_URL:?Set the dedicated business database URL}
-      WORK_ORDERS_ALLOWED_ORIGINS: 'null'
+      WORK_ORDERS_ALLOWED_ORIGINS: ${WORK_ORDERS_ALLOWED_ORIGINS:?Set the exact public qiankun host HTTPS origin}
       WORK_ORDERS_METRICS_TOKEN: ${WORK_ORDERS_METRICS_TOKEN:-}
       PLATFORM_API_ORIGIN: ${PLATFORM_API_ORIGIN:?Set the real platform HTTPS origin}
       PLATFORM_CLIENT_ID: ${PLATFORM_CLIENT_ID:?Set this application's confidential client ID}

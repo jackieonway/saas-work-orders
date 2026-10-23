@@ -1,17 +1,19 @@
 {
   "name": "work-orders-frontend",
-  "version": "1.0.0",
+  "version": "2.0.1",
   "private": true,
   "type": "module",
-  "description": "独立 Vue 3 / Vite 工单静态应用，使用 opaque iframe 与 MicroProps 2.0",
+  "description": "独立 Vue 3 / Vite / qiankun 工单微应用",
   "packageManager": "npm@11.16.0",
   "scripts": {
-    "dev": "vite --host 127.0.0.1",
+    "dev": "node scripts/dev.mjs",
     "build": "node scripts/build.mjs",
+    "release:check": "node scripts/release-check.mjs",
+    "release:candidate": "node scripts/release-candidate.mjs",
     "preview": "vite preview --host 127.0.0.1",
     "test": "node --test tests/*.mjs"
   },
   "dependencies": { "vue": "3.5.43" },
   "devDependencies": { "vite": "8.3.4" },
-  "engines": { "node": ">=24.18.0 <25", "npm": ">=11.16.0 <12" }
+  "engines": { "node": ">=24.22.1 <25", "npm": ">=11.16.0 <12" }
 }

@@ -327,7 +327,7 @@ impl Reply {
         assert!(!self.text().contains(BASIC));
         assert_eq!(
             self.headers.get("access-control-allow-origin").unwrap(),
-            "null"
+            "https://platform.example.test"
         );
         assert!(!self
             .headers
@@ -360,7 +360,10 @@ impl Harness {
             // Combined authorization is covered by the real-platform suites.
             ("PLATFORM_AUTHORIZATION_MODE", "legacy"),
             ("PLATFORM_AUTH_TIMEOUT_MS", "150"),
-            ("WORK_ORDERS_ALLOWED_ORIGINS", "null"),
+            (
+                "WORK_ORDERS_ALLOWED_ORIGINS",
+                "https://platform.example.test",
+            ),
         ])
         .expect("isolated application config");
         assert!(!format!("{config:?}").contains(SECRET));
@@ -425,7 +428,7 @@ impl Harness {
         let mut request = self
             .client
             .get(format!("{}{PREFIX}{path}", self.origin))
-            .header("origin", "null");
+            .header("origin", "https://platform.example.test");
         if let Some(token) = token {
             request = request.bearer_auth(token);
         }
@@ -1069,7 +1072,7 @@ async fn cors_preflight_and_error_responses() {
                 reqwest::Method::OPTIONS,
                 format!("{}{PREFIX}/tickets", h.origin),
             )
-            .header("origin", "null")
+            .header("origin", "https://platform.example.test")
             .header("access-control-request-method", "GET")
             .header(
                 "access-control-request-headers",
@@ -1081,7 +1084,7 @@ async fn cors_preflight_and_error_responses() {
         assert_eq!(valid.status(), 204);
         assert_eq!(
             valid.headers().get("access-control-allow-origin").unwrap(),
-            "null"
+            "https://platform.example.test"
         );
         assert!(!valid
             .headers()
@@ -1092,8 +1095,9 @@ async fn cors_preflight_and_error_responses() {
         );
         for (origin, method, headers) in [
             ("https://untrusted.example", "GET", "authorization"),
-            ("null", "TRACE", "authorization"),
-            ("null", "GET", "cookie"),
+            ("null", "GET", "authorization"),
+            ("https://platform.example.test", "TRACE", "authorization"),
+            ("https://platform.example.test", "GET", "cookie"),
         ] {
             let denied = h
                 .client
@@ -1108,7 +1112,7 @@ async fn cors_preflight_and_error_responses() {
                 .await
                 .unwrap();
             assert_eq!(denied.status(), 403);
-            if origin != "null" {
+            if origin != "https://platform.example.test" {
                 assert!(!denied.headers().contains_key("access-control-allow-origin"));
             }
         }
@@ -1123,7 +1127,7 @@ async fn cors_preflight_and_error_responses() {
         let response = h
             .client
             .get(format!("{}{PREFIX}/tickets", h.origin))
-            .header("origin", "null")
+            .header("origin", "https://platform.example.test")
             .header("x-request-id", &supplied)
             .bearer_auth("ok")
             .send()

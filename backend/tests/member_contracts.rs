@@ -462,7 +462,7 @@ impl Reply {
         assert_eq!(self.json()["code"], code);
         assert_eq!(
             self.headers.get("access-control-allow-origin").unwrap(),
-            "null"
+            "https://platform.example.test"
         );
         assert!(!self
             .headers
@@ -505,7 +505,10 @@ impl Harness {
             ("WORK_ORDERS_DB_ACQUIRE_TIMEOUT_MS", "1000"),
             ("WORK_ORDERS_DB_STATEMENT_TIMEOUT_MS", "5000"),
             ("WORK_ORDERS_DB_LOCK_TIMEOUT_MS", "500"),
-            ("WORK_ORDERS_ALLOWED_ORIGINS", "null"),
+            (
+                "WORK_ORDERS_ALLOWED_ORIGINS",
+                "https://platform.example.test",
+            ),
         ]
         .into_iter()
         .map(|(k, v)| (k.to_owned(), v.to_owned()))
@@ -559,7 +562,7 @@ impl Harness {
         let mut request = self
             .client
             .request(method, format!("{}{PREFIX}{path}", self.origin))
-            .header("origin", "null")
+            .header("origin", "https://platform.example.test")
             .bearer_auth(token)
             .body(body);
         if let Some(key) = key {

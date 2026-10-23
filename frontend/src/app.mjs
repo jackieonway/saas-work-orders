@@ -3,15 +3,16 @@ import { WorkOrdersClient, BusinessError } from './client.mjs'
 import { IntentStore, identityKey } from './intents.mjs'
 import { APP_CODE, STATUSES, PRIORITIES, SCOPE_LABELS, sameIdentity, canTicket as hasTicketGrant, canAssign, canRemind as hasReminderGrant, visibleScope, routeView, ticketDraft, validateDraft, statusChoices } from './domain.mjs'
 
-const config = window.__WORK_ORDERS_CONFIG__
-// Opaque frames cannot rely on localStorage. Keep drafts and unresolved events
-// in this application lifetime, partitioned by the complete trusted identity.
-const intents = new IntentStore(), drafts = new Map()
+const config = __QIANKUN_PUBLIC_CONFIG__
+// Keep drafts and unresolved events in this application lifetime, partitioned
+// by the complete trusted identity, without persisting credentials in storage.
+let intents = new IntentStore()
+const drafts = new Map()
 const state = reactive({ active: false, revision: 0, organization: '', tenant: '', person: '', mode: 'list',
   rows: [], total: 0, page: 1, size: 20, status: 'ALL', priority: 'ALL', detail: null, editor: null,
   assignees: [], assigneeQuery: '', assigneePage: 1, assigneeTotal: 0, assigneeError: '', deleteTarget: null, deleteUnknown: new Set(), statusUnknown: null, error: '', notice: '', reminders: new Map(), deniedActions: new Set(),
   busy: { list: false, detail: false, save: false, delete: false, export: false, remind: false, assignees: false } })
-let vueApp, lastContext, acceptedIdentity, bridge, detailId = null, requestedRoute = null, listSequence = 0, detailSequence = 0, assigneeSequence = 0
+let vueApp, mountContainer, lastContext, acceptedIdentity, hostServices, detailId = null, requestedRoute = null, listSequence = 0, detailSequence = 0, assigneeSequence = 0
 let listController, detailController, assigneeController
 const client = new WorkOrdersClient({ apiBase: config?.apiBase, onInvalidate: () => {
   state.active = false
@@ -147,7 +148,7 @@ function openEditor(ticket = null) {
   state.assignees = []; state.assigneeQuery = ''; state.assigneePage = 1; state.assigneeTotal = 0; state.assigneeError = ''; clearMessages()
   if (!ticket) navigate('/ticket-create')
   void loadAssignees()
-  void nextTick(() => document.querySelector('[data-testid="ticket-title"]')?.focus())
+  void nextTick(() => mountContainer?.querySelector('[data-testid="ticket-title"]')?.focus())
 }
 function closeEditor() {
   if (state.busy.save) return
@@ -259,7 +260,7 @@ async function exportTickets() {
   try {
     const csv = await client.exportCsv({ status: state.status, priority: state.priority })
     client.check(snapshot)
-    await bridge.downloadCsv({ resource: 'ticket', filename: '工单.csv', content: csv })
+    await hostServices.downloadCsv({ resource: 'ticket', filename: '工单.csv', content: csv })
     client.check(snapshot); success('工单 CSV 已开始下载')
   } catch (error) {
     if (!ignore(error, snapshot)) { if (error.status === 403) state.deniedActions.add('ticket:export'); state.error = humanError(error) }
@@ -324,7 +325,7 @@ function acceptProps(props) {
   acceptedIdentity = identityKey(props)
   if (state.editor && authorizationChanged) state.editor.assignmentDenied = false
   state.active = true; state.revision++; state.organization = props.organization.name; state.tenant = props.tenant.name; state.person = props.user.displayName
-  document.documentElement.dataset.theme = props.theme
+  if (mountContainer) mountContainer.dataset.theme = props.theme
   if (previousKey !== routeKey) {
     if (previousRoute.kind === 'detail') {
       detailController?.abort(); detailSequence++; state.busy.detail = false; state.detail = null
@@ -514,13 +515,20 @@ function renderApp() {
     state.active ? renderEditor(props) : null, state.active ? renderDelete() : null,
   ])
 }
-// The entry registers the SDK listener synchronously, then loads this UI chunk
-// from its lifecycle. Import completion must never delay the iframe handshake.
-export function createLifecycle(bridgeClient) {
-  bridge = bridgeClient
+// Internal render interface. The public application entry exposes only the
+// standard qiankun bootstrap/mount/update/unmount lifecycle functions.
+export function createLifecycle(services) {
+  hostServices = services
   return {
-    mount(container, props) { vueApp = createApp({ render: renderApp }); vueApp.mount(container); acceptProps(props) },
+    mount(container, props) {
+      mountContainer = container
+      container.setAttribute('data-work-orders-root', '')
+      vueApp = createApp({ render: renderApp }); vueApp.mount(container); acceptProps(props)
+    },
     update(props) { acceptProps(props) },
-    unmount() { client.stop(); vueApp?.unmount(); vueApp = null; lastContext = null },
+    unmount() {
+      client.stop(); vueApp?.unmount(); vueApp = null; lastContext = null; mountContainer = null
+      intents = new IntentStore(); drafts.clear(); state.editor = null; state.reminders.clear(); state.deleteUnknown.clear()
+    },
   }
 }

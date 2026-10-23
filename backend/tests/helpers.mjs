@@ -266,7 +266,7 @@ export async function businessServer(t, pool, platformOrigin, overrides = {}) {
   const config = {
     appCode: APP_CODE, clientId: CLIENT_ID, clientSecret: CLIENT_SECRET, platformOrigin,
     host: '127.0.0.1', port: 0, platformTimeoutMs: 250,
-    maxPlatformBodyBytes: 256 * 1024, maxBodyBytes: 64 * 1024, allowedOrigins: ['null'],
+    maxPlatformBodyBytes: 256 * 1024, maxBodyBytes: 64 * 1024, allowedOrigins: ['https://platform.example.test'],
     ...overrides,
   }
   const server = createServer({ config, pool })

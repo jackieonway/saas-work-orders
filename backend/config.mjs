@@ -33,10 +33,11 @@ export function loadConfig(env = process.env) {
   if (!clientSecret || clientSecret.length > 1024 || /[\r\n]/.test(clientSecret)) throw new Error('PLATFORM_CLIENT_SECRET is required')
   const host = env.WORK_ORDERS_HOST?.trim() || '0.0.0.0'
   if (!host || /[\s/\\]/.test(host)) throw new Error('WORK_ORDERS_HOST must be a bind address')
-  const allowedOrigins = [...new Set((env.WORK_ORDERS_ALLOWED_ORIGINS ?? 'null').split(',').map((value) => {
-    const item = value.trim()
-    return item === 'null' ? item : origin(item, production, 'WORK_ORDERS_ALLOWED_ORIGINS')
-  }))]
+  // The public qiankun host is required; never infer it from the private API
+  // address or retain the old opaque iframe/null allowance.
+  if (typeof env.WORK_ORDERS_ALLOWED_ORIGINS !== 'string') throw new Error('WORK_ORDERS_ALLOWED_ORIGINS is required')
+  const allowedOrigins = [...new Set(env.WORK_ORDERS_ALLOWED_ORIGINS.split(',').map(value =>
+    origin(value.trim(), production, 'WORK_ORDERS_ALLOWED_ORIGINS')))]
   return Object.freeze({
     databaseUrl, platformOrigin, clientId, clientSecret, appCode: 'work-orders', host, production,
     metricsToken: metricsToken(env, production),

@@ -26,7 +26,8 @@ async function fixture(t) {
   await new Promise((resolve) => platform.listen(0, '127.0.0.1', resolve))
   const config = loadConfig({ WORK_ORDERS_DATABASE_URL: 'postgresql://fixture@127.0.0.1/no_connection',
     PLATFORM_API_ORIGIN: `http://127.0.0.1:${platform.address().port}`, PLATFORM_CLIENT_ID: 'fixture',
-    PLATFORM_CLIENT_SECRET: 'fixture-never-logged', METRICS_TOKEN: TOKEN })
+    PLATFORM_CLIENT_SECRET: 'fixture-never-logged', METRICS_TOKEN: TOKEN,
+    WORK_ORDERS_ALLOWED_ORIGINS: 'https://platform.example.test' })
   const pool = { async query(sql) {
     if (!state.database) throw new Error('fixture-database-secret')
     return { rows: /count\(\*\)/.test(sql) ? [{ total: 0 }] : [], rowCount: 0 }

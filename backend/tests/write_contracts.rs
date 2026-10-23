@@ -304,7 +304,7 @@ impl Reply {
         assert_eq!(self.json()["code"], code);
         assert_eq!(
             self.headers.get("access-control-allow-origin").unwrap(),
-            "null"
+            "https://platform.example.test"
         );
         assert!(!self
             .headers
@@ -349,7 +349,10 @@ impl Harness {
             ("WORK_ORDERS_DB_ACQUIRE_TIMEOUT_MS", "1000"),
             ("WORK_ORDERS_DB_STATEMENT_TIMEOUT_MS", "5000"),
             ("WORK_ORDERS_DB_LOCK_TIMEOUT_MS", "500"),
-            ("WORK_ORDERS_ALLOWED_ORIGINS", "null"),
+            (
+                "WORK_ORDERS_ALLOWED_ORIGINS",
+                "https://platform.example.test",
+            ),
         ]
         .into_iter()
         .map(|(k, v)| (k.to_owned(), v.to_owned()))
@@ -403,7 +406,7 @@ impl Harness {
         let mut request = self
             .client
             .request(method, format!("{}{PREFIX}{path}", self.origin))
-            .header("origin", "null")
+            .header("origin", "https://platform.example.test")
             .bearer_auth(token)
             .body(body);
         if let Some(key) = key {
@@ -512,7 +515,7 @@ async fn create_requires_valid_header_and_canonical_body() {
         for key in ["".to_owned(),"space key".into(),"bad/key".into(),"x".repeat(129)] {
             h.create(&key,"valid").await.error(400,"VALIDATION_ERROR");
         }
-        let response=h.client.post(format!("{}{PREFIX}/tickets",h.origin)).header("origin","null").bearer_auth("writer")
+        let response=h.client.post(format!("{}{PREFIX}/tickets",h.origin)).header("origin","https://platform.example.test").bearer_auth("writer")
             .header("Idempotency-Key","first").header("Idempotency-Key","second").json(&json!({"title":"valid"})).send().await.unwrap();
         assert_eq!(response.status(),400);
         assert_eq!(counts(&f).await,(0,0));assert_eq!(counter(&f,f.identity.tenant).await,None);
@@ -632,7 +635,7 @@ async fn committed_response_loss_replays_original_result() {
         let lost = h
             .client
             .post(format!("{proxy_origin}{PREFIX}/tickets"))
-            .header("origin", "null")
+            .header("origin", "https://platform.example.test")
             .bearer_auth("writer")
             .header("Idempotency-Key", "lost-response")
             .json(&json!({"title":"committed ticket"}))
@@ -1038,9 +1041,9 @@ async fn nonempty_assignee_requires_available_validated_directory() {
         h.request(Method::PATCH,"writer",&path,None,json!({"version":2,"assigneeUserId":"invalid"})).await.error(400,"VALIDATION_ERROR");
         assert_eq!(h.state.lock().unwrap().members,2,"unchanged and malformed assignments do not call the directory");
         let cleared=h.request(Method::PATCH,"writer",&path,None,json!({"version":2,"assigneeUserId":null})).await;assert_eq!(cleared.status,200);assert_eq!(cleared.json()["assigneeUserId"],Value::Null);
-        let preflight=h.client.request(Method::OPTIONS,format!("{}{PREFIX}/tickets",h.origin)).header("origin","null")
+        let preflight=h.client.request(Method::OPTIONS,format!("{}{PREFIX}/tickets",h.origin)).header("origin","https://platform.example.test")
             .header("access-control-request-method","POST").header("access-control-request-headers","Authorization, Content-Type, Idempotency-Key").send().await.unwrap();
-        assert_eq!(preflight.status(),204);assert_eq!(preflight.headers().get("access-control-allow-origin").unwrap(),"null");
+        assert_eq!(preflight.status(),204);assert_eq!(preflight.headers().get("access-control-allow-origin").unwrap(),"https://platform.example.test");
         assert!(preflight.headers().get("access-control-allow-headers").unwrap().to_str().unwrap().to_ascii_lowercase().contains("idempotency-key"));
         assert_eq!(h.state.lock().unwrap().members,2);
     }).await;

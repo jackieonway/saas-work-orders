@@ -23,8 +23,8 @@ function createBody(body) {
   return Object.freeze(Object.fromEntries(Object.entries(body).filter(([, value]) => value !== undefined)))
 }
 
-/** In-memory recovery survives routes and authorization renewal in the mounted iframe.
- * Opaque iframe storage is unavailable; reloads require keeping this view open until resolved.
+/** In-memory recovery survives routes and authorization renewal in the mounted application.
+ * Reloads require keeping this view open until unresolved writes are settled.
  */
 export class IntentStore {
   #creates = new Map()

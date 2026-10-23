@@ -51,7 +51,7 @@ struct ErrorBody {
 /// histories, and required objects. It does not claim platform authorization or
 /// complete business API readiness. All business routes remain unavailable.
 pub fn router(pool: PgPool, health_timeout: Duration) -> Router {
-    configured_router(pool, health_timeout, None, vec!["null".into()])
+    configured_router(pool, health_timeout, None, vec![])
 }
 
 /// Construct authenticated read, export and transactional write routes.
@@ -622,7 +622,12 @@ mod tests {
         let pool = PgPoolOptions::new()
             .connect_lazy("postgresql://worker:secret@127.0.0.1:1/orders")
             .unwrap();
-        router(pool, Duration::from_millis(10))
+        configured_router(
+            pool,
+            Duration::from_millis(10),
+            None,
+            vec!["https://platform.example.test".into()],
+        )
     }
 
     #[tokio::test]
@@ -632,7 +637,7 @@ mod tests {
                 Request::builder()
                     .method(Method::OPTIONS)
                     .uri("/work-orders-api/tickets")
-                    .header("origin", "null")
+                    .header("origin", "https://platform.example.test")
                     .header("access-control-request-method", "POST")
                     .header(
                         "access-control-request-headers",
@@ -644,7 +649,10 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::NO_CONTENT);
-        assert_eq!(response.headers()["access-control-allow-origin"], "null");
+        assert_eq!(
+            response.headers()["access-control-allow-origin"],
+            "https://platform.example.test"
+        );
         assert!(response.headers()["access-control-allow-headers"]
             .to_str()
             .unwrap()
@@ -760,13 +768,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn opaque_preflight_does_not_require_database_or_authorization() {
+    async fn host_preflight_does_not_require_database_or_authorization() {
         let response = app()
             .oneshot(
                 Request::builder()
                     .method("OPTIONS")
                     .uri("/work-orders-api/tickets")
-                    .header("origin", "null")
+                    .header("origin", "https://platform.example.test")
                     .header("access-control-request-method", "GET")
                     .header(
                         "access-control-request-headers",
@@ -778,7 +786,10 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::NO_CONTENT);
-        assert_eq!(response.headers()["access-control-allow-origin"], "null");
+        assert_eq!(
+            response.headers()["access-control-allow-origin"],
+            "https://platform.example.test"
+        );
         assert_eq!(
             response.headers()["access-control-expose-headers"],
             "X-Request-Id"
@@ -792,8 +803,19 @@ mod tests {
     #[tokio::test]
     async fn preflight_and_origin_denials_preserve_safe_metadata() {
         for (origin, method, headers, allow_origin) in [
-            (Some("null"), "TRACE", "authorization", true),
-            (Some("null"), "GET", "x-secret", true),
+            (
+                Some("https://platform.example.test"),
+                "TRACE",
+                "authorization",
+                true,
+            ),
+            (
+                Some("https://platform.example.test"),
+                "GET",
+                "x-secret",
+                true,
+            ),
+            (Some("null"), "GET", "authorization", false),
             (
                 Some("https://unregistered.invalid"),
                 "GET",
@@ -827,6 +849,79 @@ mod tests {
                 serde_json::from_slice(&to_bytes(response.into_body(), 4096).await.unwrap())
                     .unwrap();
             assert_eq!(body["code"], "ORIGIN_DENIED");
+        }
+    }
+
+    #[tokio::test]
+    async fn baseline_router_without_a_browser_allowlist_rejects_host_and_null_origins() {
+        for origin in ["https://platform.example.test", "null"] {
+            let pool = PgPoolOptions::new()
+                .connect_lazy("postgresql://worker:secret@127.0.0.1:1/orders")
+                .unwrap();
+            let response = router(pool, Duration::from_millis(10))
+                .oneshot(
+                    Request::builder()
+                        .uri("/work-orders-api/health/live")
+                        .header("origin", origin)
+                        .body(axum::body::Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::FORBIDDEN);
+            assert!(!response
+                .headers()
+                .contains_key("access-control-allow-origin"));
+        }
+    }
+
+    #[tokio::test]
+    async fn approved_host_still_requires_an_application_bearer_token() {
+        let config = Config::from_pairs([
+            (
+                "WORK_ORDERS_DATABASE_URL",
+                "postgresql://worker:secret@127.0.0.1:1/orders",
+            ),
+            (
+                "WORK_ORDERS_ALLOWED_ORIGINS",
+                "https://platform.example.test",
+            ),
+            ("PLATFORM_API_ORIGIN", "https://platform.example.test"),
+            ("PLATFORM_CLIENT_ID", "work-orders-fixture"),
+            ("PLATFORM_CLIENT_SECRET", "fixture-private-secret"),
+        ])
+        .unwrap();
+        for (origin, expected) in [
+            ("https://platform.example.test", StatusCode::UNAUTHORIZED),
+            ("null", StatusCode::FORBIDDEN),
+            ("https://unapproved.example.test", StatusCode::FORBIDDEN),
+        ] {
+            let pool = PgPoolOptions::new()
+                .connect_lazy("postgresql://worker:secret@127.0.0.1:1/orders")
+                .unwrap();
+            let response = application(&config, pool)
+                .unwrap()
+                .oneshot(
+                    Request::builder()
+                        .uri("/work-orders-api/tickets")
+                        .header("origin", origin)
+                        .body(axum::body::Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), expected);
+            let body: serde_json::Value =
+                serde_json::from_slice(&to_bytes(response.into_body(), 4096).await.unwrap())
+                    .unwrap();
+            assert_eq!(
+                body["code"],
+                if expected == StatusCode::UNAUTHORIZED {
+                    "INVALID_APP_TOKEN"
+                } else {
+                    "ORIGIN_DENIED"
+                }
+            );
         }
     }
 

@@ -335,6 +335,23 @@ struct Fixture {
     headers: Mutex<Vec<(String, String)>>,
 }
 
+enum FixtureServer {
+    Rust(tokio::task::JoinHandle<()>),
+    Node(super::node_fixture::Server),
+}
+
+impl FixtureServer {
+    async fn close(self) {
+        match self {
+            Self::Rust(task) => {
+                task.abort();
+                let _ = task.await;
+            }
+            Self::Node(server) => drop(server),
+        }
+    }
+}
+
 async fn fixture_response(
     State(state): State<Arc<Fixture>>,
     headers: HeaderMap,
@@ -423,10 +440,7 @@ async fn fixture_response(
     }
 }
 
-async fn fixture(
-    timeout: &str,
-    max: &str,
-) -> (Authorizer, Arc<Fixture>, tokio::task::JoinHandle<()>) {
+async fn fixture(timeout: &str, max: &str) -> (Authorizer, Arc<Fixture>, FixtureServer) {
     fixture_mode(timeout, max, "legacy").await
 }
 
@@ -434,22 +448,28 @@ async fn fixture_mode(
     timeout: &str,
     max: &str,
     authorization_mode: &str,
-) -> (Authorizer, Arc<Fixture>, tokio::task::JoinHandle<()>) {
+) -> (Authorizer, Arc<Fixture>, FixtureServer) {
     let state = Arc::new(Fixture {
         mode: AtomicU8::new(0),
         calls: AtomicUsize::new(0),
         headers: Mutex::new(Vec::new()),
     });
-    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let origin = format!("http://{}", listener.local_addr().unwrap());
     let app = Router::new()
         .route("/oauth/introspect", post(fixture_response))
         .route("/api/apps/work-orders/authorize", post(fixture_response))
         .route("/api/apps/work-orders/context", get(fixture_response))
         .with_state(state.clone());
-    let server = tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
-    });
+    let (origin, server) = if std::env::var_os("WORK_ORDERS_TEST_NODE").is_some() {
+        let server = super::node_fixture::Server::start(app).await;
+        (server.origin.clone(), FixtureServer::Node(server))
+    } else {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let origin = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        (origin, FixtureServer::Rust(server))
+    };
     let config = Config::from_pairs([
         (
             "WORK_ORDERS_DATABASE_URL",
@@ -457,6 +477,10 @@ async fn fixture_mode(
         ),
         ("PLATFORM_API_ORIGIN", &origin),
         ("PLATFORM_CLIENT_ID", "client"),
+        (
+            "WORK_ORDERS_ALLOWED_ORIGINS",
+            "https://platform.example.test",
+        ),
         ("PLATFORM_AUTHORIZATION_MODE", authorization_mode),
         ("PLATFORM_CLIENT_SECRET", "secret"),
         ("PLATFORM_AUTH_TIMEOUT_MS", timeout),
@@ -494,7 +518,7 @@ async fn combined_authorization_keeps_independent_policy_and_never_caches() {
             .code(),
         "OPERATION_DENIED"
     );
-    server.abort();
+    server.close().await;
 }
 
 #[tokio::test]
@@ -521,8 +545,7 @@ async fn fresh_basic_introspection_then_bearer_context_are_never_positive_cached
         "INVALID_APP_TOKEN"
     );
     assert_eq!(state.calls.load(Ordering::SeqCst), 3);
-    server.abort();
-    let _ = server.await;
+    server.close().await;
 }
 
 #[tokio::test]
@@ -547,8 +570,7 @@ async fn upstream_status_body_redirect_json_and_capacity_fail_closed() {
         assert!(!format!("{error:?} {error}").contains("secret"));
     }
     assert_eq!(state.calls.load(Ordering::SeqCst), 7);
-    server.abort();
-    let _ = server.await;
+    server.close().await;
 }
 
 #[tokio::test]
@@ -577,16 +599,21 @@ async fn shared_authorization_budget_and_concurrency_bound_do_not_queue_requests
     );
     assert!(started.elapsed() < std::time::Duration::from_secs(1));
     assert_eq!(auth.concurrent.available_permits(), 1);
-    server.abort();
-    let _ = server.await;
+    server.close().await;
 }
 
 #[test]
 fn protected_application_requires_platform_configuration() {
-    let config = Config::from_pairs([(
-        "WORK_ORDERS_DATABASE_URL",
-        "postgresql://worker:secret@127.0.0.1/orders",
-    )])
+    let config = Config::from_pairs([
+        (
+            "WORK_ORDERS_DATABASE_URL",
+            "postgresql://worker:secret@127.0.0.1/orders",
+        ),
+        (
+            "WORK_ORDERS_ALLOWED_ORIGINS",
+            "https://platform.example.test",
+        ),
+    ])
     .unwrap();
     let error = Authorizer::new(&config).err().unwrap();
     assert_eq!(

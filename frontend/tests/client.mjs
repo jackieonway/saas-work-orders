@@ -267,7 +267,7 @@ test('shared registered SDK distinguishes permission, conflict, network and prot
     [() => new Response('mock-app-token', { status: 409 }), 'CONFLICT', 409],
     [() => { throw new Error('mock-app-token') }, 'NETWORK', 503], [() => new Response('mock-app-token'), 'PROTOCOL', 502]]) {
     const client = new WorkOrdersClient({ fetchImpl: response })
-    assert.equal(client.sdkVersion, '1.0.0'); client.update(props())
+    assert.equal(client.sdkVersion, '2.0.0'); client.update(props())
     await assert.rejects(client.list({}), (error) => {
       assert.ok(error instanceof BusinessError); assert.equal(error.kind, kind); assert.equal(error.status, status)
       assert.match(error.requestId, /^[0-9a-f-]{36}$/i); assert.equal(String(error).includes('mock-app-token'), false)

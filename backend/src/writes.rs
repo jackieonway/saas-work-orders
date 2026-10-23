@@ -345,16 +345,20 @@ async fn assignment_preflight(
         "SELECT organization_id,assignee_user_id,version FROM public.work_orders WHERE ",
     );
     auth.append_scope(&mut sql);
-    let row = sql
+    let mut connection = pool.acquire().await.map_err(database_error)?;
+    let result = sql
         .push(" AND id=")
         .push_bind(id)
         .build()
-        .fetch_optional(pool)
-        .await
+        .fetch_optional(&mut *connection)
+        .await;
+    // PoolConnection::drop schedules its return on another task. Await the
+    // actual return so even a single-connection pool is idle before member HTTP.
+    connection.return_to_pool().await;
+    let row = result
         .map_err(database_error)?
         .ok_or_else(ApiError::not_found)?;
-    // fetch_optional returns the connection to the pool before the caller
-    // starts member HTTP. This read takes no ticket row lock or transaction.
+    // This read takes no ticket row lock or transaction.
     auth.assert_fresh()?;
     if row.try_get::<i32, _>("version").map_err(database_error)? != version {
         return Err(version_conflict());

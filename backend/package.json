@@ -1,13 +1,13 @@
 {
   "name": "work-orders-api",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "private": true,
   "type": "module",
   "description": "Legacy compatibility test dependencies; the work-order service entry dispatches Rust",
-  "engines": { "node": ">=24 <25" },
+  "engines": { "node": ">=24.22.1 <25" },
   "scripts": {
     "start": "cargo run --locked --manifest-path Cargo.toml",
-    "test": "node --test backend/acceptance/*.test.mjs"
+    "test": "node --test tests/*.test.mjs"
   },
   "dependencies": { "pg": "^8.16.3" }
 }

@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url'
 import { preview } from 'vite'
 import { createWorkOrdersConfig, readPublicConfig } from '../vite.config.mjs'
 
-test('version-prefixed static delivery serves the ESM graph and keeps missing resources as real 404s', { timeout: 60000 }, async t => {
+test('version-prefixed static delivery serves qiankun HTML, UMD and CSS while missing resources stay 404', { timeout: 60000 }, async t => {
   const temporary = realpathSync(os.tmpdir())
   const root = realpathSync(mkdtempSync(path.join(temporary, 'work-orders-vite-static-')))
   t.after(() => {
@@ -36,12 +36,13 @@ test('version-prefixed static delivery serves the ESM graph and keeps missing re
   assert.equal(htmlResponse.status, 200)
   const html = await htmlResponse.text()
   const urls = [...html.matchAll(/(?:src|href)="(\.\/[^"#]+)"/g)].map(match => match[1])
-  assert.ok(urls.length >= 4)
+  assert.equal(urls.length, 2)
   for (const resource of urls) {
     const url = new URL(resource, base)
     assert.ok(url.pathname.startsWith(prefix))
-    const response = await fetch(url)
+    const response = await fetch(url, { headers: { Origin: 'https://platform.example.com' } })
     assert.equal(response.status, 200, resource)
+    assert.equal(response.headers.get('access-control-allow-origin'), 'https://platform.example.com')
     assert.equal(await response.text(), readFileSync(path.join(outDir, resource), 'utf8'))
   }
   const metadata = JSON.parse(readFileSync(path.join(outDir, 'build-info.json'), 'utf8'))

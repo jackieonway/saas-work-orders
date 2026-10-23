@@ -1,0 +1,965 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://saas.invalid/contracts/micro-app-sdk/schema.json",
+  "description": "Source schema. The fixed generator resolves x-release-contract from release.json; generated/schema.json is the standard validation artifact.",
+  "$defs": {
+    "SDKVersion": {
+      "type": "string",
+      "const": "2.0.0"
+    },
+    "ContextContractVersion": {
+      "type": "string",
+      "const": "1.0"
+    },
+    "MicroPropsContractVersion": {
+      "type": "string",
+      "const": "2.0"
+    },
+    "NotificationContractVersion": {
+      "type": "string",
+      "const": "1.0"
+    },
+    "MicroEntryType": {
+      "type": "string",
+      "enum": [
+        "HTML"
+      ]
+    },
+    "MicroRuntimeMode": {
+      "type": "string",
+      "enum": [
+        "TRUSTED"
+      ]
+    },
+    "MicroTheme": {
+      "type": "string",
+      "enum": [
+        "light",
+        "dark"
+      ]
+    },
+    "MicroNotifyVariant": {
+      "type": "string",
+      "enum": [
+        "default",
+        "success",
+        "error",
+        "warning",
+        "info"
+      ]
+    },
+    "MicroDataScope": {
+      "type": "string",
+      "enum": [
+        "SELF",
+        "ORG",
+        "ORG_SUBTREE",
+        "TENANT"
+      ]
+    },
+    "NotificationType": {
+      "type": "string",
+      "enum": [
+        "INFO",
+        "SUCCESS",
+        "WARNING",
+        "SECURITY"
+      ]
+    },
+    "MicroUser": {
+      "type": "object",
+      "required": [
+        "id",
+        "username",
+        "displayName"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "username": {
+          "type": "string"
+        },
+        "displayName": {
+          "type": "string"
+        }
+      }
+    },
+    "MicroTenant": {
+      "type": "object",
+      "required": [
+        "id",
+        "code",
+        "name"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "code": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        }
+      }
+    },
+    "MicroOrganization": {
+      "type": "object",
+      "required": [
+        "id",
+        "name",
+        "path"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "name": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        }
+      }
+    },
+    "MicroRole": {
+      "type": "object",
+      "required": [
+        "id",
+        "name",
+        "code"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "name": {
+          "type": "string"
+        },
+        "code": {
+          "type": "string"
+        }
+      }
+    },
+    "MicroDataGrant": {
+      "type": "object",
+      "required": [
+        "resource",
+        "action",
+        "scope",
+        "subjectUserId",
+        "tenantId",
+        "organizationIds"
+      ],
+      "properties": {
+        "resource": {
+          "type": "string",
+          "minLength": 1
+        },
+        "action": {
+          "type": "string",
+          "minLength": 1
+        },
+        "scope": {
+          "$ref": "#/$defs/MicroDataScope"
+        },
+        "subjectUserId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "tenantId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "organizationIds": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "maxItems": 10000
+        }
+      }
+    },
+    "MicroMenuType": {
+      "type": "string",
+      "enum": [
+        "DIR",
+        "MENU",
+        "BUTTON"
+      ]
+    },
+    "MicroMenuItem": {
+      "type": "object",
+      "required": [
+        "id",
+        "parentId",
+        "type",
+        "title",
+        "path",
+        "icon",
+        "sortOrder",
+        "visible"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "parentId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "type": {
+          "$ref": "#/$defs/MicroMenuType"
+        },
+        "title": {
+          "type": "string"
+        },
+        "path": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "icon": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "sortOrder": {
+          "type": "integer"
+        },
+        "visible": {
+          "type": "boolean"
+        },
+        "permission": {
+          "type": "string"
+        },
+        "children": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MicroMenuItem"
+          }
+        }
+      }
+    },
+    "MicroApplication": {
+      "type": "object",
+      "required": [
+        "id",
+        "name"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "name": {
+          "type": "string"
+        },
+        "runtimeMode": {
+          "$ref": "#/$defs/MicroRuntimeMode"
+        },
+        "entryType": {
+          "$ref": "#/$defs/MicroEntryType"
+        },
+        "entryUrl": {
+          "type": "string"
+        },
+        "deploymentVersion": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "entryVersionId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "AppAuthorizationContext": {
+      "type": "object",
+      "required": [
+        "contractVersion",
+        "contextVersion",
+        "expiresAt",
+        "appCode",
+        "application",
+        "user",
+        "tenant",
+        "organization",
+        "roles",
+        "permissions",
+        "dataGrants",
+        "menus"
+      ],
+      "properties": {
+        "contractVersion": {
+          "$ref": "#/$defs/ContextContractVersion"
+        },
+        "contextVersion": {
+          "type": "string",
+          "minLength": 1
+        },
+        "expiresAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "appCode": {
+          "type": "string",
+          "minLength": 1
+        },
+        "application": {
+          "$ref": "#/$defs/MicroApplication"
+        },
+        "user": {
+          "$ref": "#/$defs/MicroUser"
+        },
+        "tenant": {
+          "$ref": "#/$defs/MicroTenant"
+        },
+        "organization": {
+          "$ref": "#/$defs/MicroOrganization"
+        },
+        "organizationScopeIds": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "maxItems": 10000
+        },
+        "roles": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MicroRole"
+          }
+        },
+        "permissions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "dataGrants": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MicroDataGrant"
+          }
+        },
+        "menus": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MicroMenuItem"
+          }
+        }
+      }
+    },
+    "MicroPropsWire": {
+      "type": "object",
+      "required": [
+        "contractVersion",
+        "contextVersion",
+        "contextEpoch",
+        "expiresAt",
+        "tokenExpiresAt",
+        "appCode",
+        "basePath",
+        "routePath",
+        "token",
+        "user",
+        "tenant",
+        "organization",
+        "organizationScopeIds",
+        "roles",
+        "permissions",
+        "dataGrants",
+        "theme",
+        "menus"
+      ],
+      "properties": {
+        "sdkVersion": {
+          "$ref": "#/$defs/SDKVersion"
+        },
+        "contractVersion": {
+          "$ref": "#/$defs/MicroPropsContractVersion"
+        },
+        "contextVersion": {
+          "type": "string",
+          "minLength": 1
+        },
+        "contextEpoch": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "expiresAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "tokenExpiresAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "deploymentVersion": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "entryVersionId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "appCode": {
+          "type": "string",
+          "minLength": 1
+        },
+        "basePath": {
+          "type": "string",
+          "minLength": 1
+        },
+        "routePath": {
+          "type": "string"
+        },
+        "token": {
+          "type": "string",
+          "minLength": 1
+        },
+        "user": {
+          "$ref": "#/$defs/MicroUser"
+        },
+        "tenant": {
+          "$ref": "#/$defs/MicroTenant"
+        },
+        "organization": {
+          "$ref": "#/$defs/MicroOrganization"
+        },
+        "organizationScopeIds": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "maxItems": 10000
+        },
+        "roles": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MicroRole"
+          }
+        },
+        "permissions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "dataGrants": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MicroDataGrant"
+          }
+        },
+        "theme": {
+          "$ref": "#/$defs/MicroTheme"
+        },
+        "menus": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MicroMenuItem"
+          }
+        }
+      }
+    },
+    "NotificationTarget": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "userId",
+            "organizationId"
+          ],
+          "properties": {
+            "kind": {
+              "const": "USER"
+            },
+            "userId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "organizationId": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "organizationId"
+          ],
+          "properties": {
+            "kind": {
+              "const": "ORGANIZATION"
+            },
+            "organizationId": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "const": "TENANT"
+            }
+          }
+        }
+      ]
+    },
+    "NotificationPublishBody": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "idempotencyKey",
+        "target",
+        "type",
+        "title"
+      ],
+      "properties": {
+        "idempotencyKey": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        },
+        "target": {
+          "$ref": "#/$defs/NotificationTarget"
+        },
+        "type": {
+          "$ref": "#/$defs/NotificationType"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "content": {
+          "type": "string",
+          "maxLength": 8192
+        },
+        "link": {
+          "type": "string",
+          "maxLength": 300
+        }
+      }
+    },
+    "NotificationPublication": {
+      "type": "object",
+      "required": [
+        "publicationId",
+        "recipientCount",
+        "deliveryCount",
+        "duplicate",
+        "createdAt"
+      ],
+      "properties": {
+        "publicationId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "recipientCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "deliveryCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "duplicate": {
+          "type": "boolean"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "NotificationSocketContext": {
+      "type": "object",
+      "required": [
+        "contractVersion",
+        "userId",
+        "tenantId",
+        "organizationId",
+        "expiresAt"
+      ],
+      "properties": {
+        "contractVersion": {
+          "$ref": "#/$defs/NotificationContractVersion"
+        },
+        "userId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "tenantId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "organizationId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "expiresAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "NotificationPlatformSocketContext": {
+      "type": "object",
+      "required": [
+        "contractVersion",
+        "userId",
+        "tenantId",
+        "organizationId",
+        "sessionId",
+        "expiresAt"
+      ],
+      "properties": {
+        "contractVersion": {
+          "$ref": "#/$defs/NotificationContractVersion"
+        },
+        "userId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "tenantId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "organizationId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sessionId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "expiresAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "RealtimeNotification": {
+      "type": "object",
+      "required": [
+        "contractVersion",
+        "id",
+        "userId",
+        "tenantId",
+        "organizationId",
+        "applicationId",
+        "publicationId",
+        "type",
+        "title",
+        "content",
+        "link",
+        "createdAt"
+      ],
+      "allOf": [
+        {
+          "oneOf": [
+            {
+              "properties": {
+                "applicationId": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "publicationId": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            },
+            {
+              "properties": {
+                "applicationId": {
+                  "type": "null"
+                },
+                "publicationId": {
+                  "type": "null"
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "properties": {
+        "contractVersion": {
+          "$ref": "#/$defs/NotificationContractVersion"
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "userId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "tenantId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "organizationId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "applicationId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        },
+        "publicationId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        },
+        "type": {
+          "$ref": "#/$defs/NotificationType"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "content": {
+          "type": "string",
+          "maxLength": 8192
+        },
+        "link": {
+          "type": "string",
+          "maxLength": 300
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "NotificationRecord": {
+      "type": "object",
+      "required": [
+        "id",
+        "userId",
+        "tenantId",
+        "organizationId",
+        "sourceKind",
+        "applicationId",
+        "publicationId",
+        "applicationName",
+        "type",
+        "title",
+        "content",
+        "link",
+        "isRead",
+        "readAt",
+        "createdAt"
+      ],
+      "allOf": [
+        {
+          "oneOf": [
+            {
+              "properties": {
+                "sourceKind": {
+                  "const": "APP"
+                },
+                "applicationId": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "publicationId": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            },
+            {
+              "properties": {
+                "sourceKind": {
+                  "const": "SYSTEM"
+                },
+                "applicationId": {
+                  "type": "null"
+                },
+                "publicationId": {
+                  "type": "null"
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "userId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "tenantId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "organizationId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sourceKind": {
+          "$ref": "#/$defs/NotificationSourceKind"
+        },
+        "applicationId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        },
+        "publicationId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        },
+        "applicationName": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "type": {
+          "$ref": "#/$defs/NotificationType"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "content": {
+          "type": "string",
+          "maxLength": 8192
+        },
+        "link": {
+          "type": "string",
+          "maxLength": 300
+        },
+        "isRead": {
+          "type": "boolean"
+        },
+        "readAt": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "NotificationSourceKind": {
+      "type": "string",
+      "enum": [
+        "APP",
+        "SYSTEM"
+      ]
+    },
+    "PublicRequestErrorKind": {
+      "type": "string",
+      "enum": [
+        "UNAUTHORIZED",
+        "FORBIDDEN",
+        "CONFLICT",
+        "NETWORK",
+        "PROTOCOL",
+        "HTTP"
+      ]
+    },
+    "PublicRequestError": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "code",
+        "message",
+        "kind",
+        "status"
+      ],
+      "properties": {
+        "code": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[A-Z][A-Z0-9_]{0,63}$"
+        },
+        "message": {
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/PublicRequestErrorKind"
+        },
+        "status": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 599
+        },
+        "requestId": {
+          "type": "string",
+          "format": "uuid"
+        }
+      }
+    }
+  }
+}
