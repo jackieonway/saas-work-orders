@@ -1,7 +1,7 @@
 // A real HTTP preflight/trace check; no platform, business database or authentication bypass.
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { randomUUID } from 'node:crypto'
+import { newId } from '../uuid.mjs'
 import { createServer } from '../server.mjs'
 
 test('qiankun host passes exact-origin CORS while opaque origins fail without bypassing authentication', async t => {
@@ -24,7 +24,7 @@ test('qiankun host passes exact-origin CORS while opaque origins fail without by
     assert.match(response.headers.get('access-control-expose-headers'), /x-request-id/i)
     assert.equal(response.headers.get('access-control-allow-credentials'), null)
   }
-  const trace = randomUUID()
+  const trace = newId()
   const unauthorized = await fetch(url, { headers: { Origin: 'https://approved.example.test', 'X-Request-Id': trace } })
   assert.equal(unauthorized.status, 401)
   assert.equal(unauthorized.headers.get('x-request-id'), trace)

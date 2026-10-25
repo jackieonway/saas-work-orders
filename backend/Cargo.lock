@@ -972,6 +972,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
 
 [[package]]
+name = "operational-telemetry"
+version = "0.1.0"
+
+[[package]]
 name = "parking"
 version = "2.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2416,9 +2420,9 @@ checksum = "589f6da84c646204747d1270a2a5661ea66ed1cced2631d546fdfb155959f9ec"
 name = "work-orders-api"
 version = "0.1.0"
 dependencies = [
- "operational-telemetry",
  "axum",
  "chrono",
+ "operational-telemetry",
  "reqwest",
  "serde",
  "serde_json",
@@ -2546,7 +2550,3 @@ name = "zmij"
 version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "29666d0abbfad1e3dc4dcf6144730dd3a3ab225bbbdac83319345b1b44ccfc1b"
-
-[[package]]
-name = "operational-telemetry"
-version = "0.1.0"

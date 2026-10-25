@@ -9,39 +9,39 @@ const deferred = () => { let resolve; const promise = new Promise((done) => { re
 function props(extra = {}) {
   return { contractVersion: '2.0', appCode: 'work-orders', basePath: '/micro/work-orders', contextVersion: 'ctx-1', contextEpoch: 1,
     token: 'mock-app-token', expiresAt: new Date(Date.now() + 60_000).toISOString(), tokenExpiresAt: new Date(Date.now() + 60_000).toISOString(),
-    signal: new AbortController().signal, user: { id: 'user-1' }, tenant: { id: 'tenant-1' }, organization: { id: 'org-1' },
-    organizationScopeIds: ['org-1', 'org-2'],
+    signal: new AbortController().signal, user: { id: '0199fe00-0000-7000-8000-000000000001' }, tenant: { id: '0199fe00-0000-7000-8000-000000000003' }, organization: { id: '0199fe00-0000-7000-8000-000000000004' },
+    organizationScopeIds: ['0199fe00-0000-7000-8000-000000000004', '0199fe00-0000-7000-8000-000000000005'],
     permissions: ['ticket:read', 'ticket:create', 'ticket:update', 'ticket:delete', 'ticket:export', 'notification:publish'],
     dataGrants: ['read', 'create', 'update', 'delete', 'export'].map((action) => grant('SELF', action)), ...extra }
 }
 function grant(scope = 'SELF', action = 'read', extra = {}) {
-  const organizationIds = scope === 'TENANT' ? [] : scope === 'ORG' ? ['org-1'] : ['org-1', 'org-2']
-  return { resource: 'ticket', action, scope, subjectUserId: 'user-1', tenantId: 'tenant-1', organizationIds, ...extra }
+  const organizationIds = scope === 'TENANT' ? [] : scope === 'ORG' ? ['0199fe00-0000-7000-8000-000000000004'] : ['0199fe00-0000-7000-8000-000000000004', '0199fe00-0000-7000-8000-000000000005']
+  return { resource: 'ticket', action, scope, subjectUserId: '0199fe00-0000-7000-8000-000000000001', tenantId: '0199fe00-0000-7000-8000-000000000003', organizationIds, ...extra }
 }
-const ticket = (extra = {}) => ({ id: 'ticket-1', tenantId: 'tenant-1', organizationId: 'org-1', ownerUserId: 'user-1', assigneeUserId: 'user-2', ...extra })
-const serverTicket = (extra = {}) => ({ id: '11111111-1111-4111-8111-111111111111', number: 'WO-000001',
-  tenantId: '22222222-2222-4222-8222-222222222222', organizationId: '33333333-3333-4333-8333-333333333333',
-  ownerUserId: '44444444-4444-4444-8444-444444444444', assigneeUserId: null, assigneeDisplayName: null,
+const ticket = (extra = {}) => ({ id: '0199fe00-0000-7000-8000-000000000008', tenantId: '0199fe00-0000-7000-8000-000000000003', organizationId: '0199fe00-0000-7000-8000-000000000004', ownerUserId: '0199fe00-0000-7000-8000-000000000001', assigneeUserId: '0199fe00-0000-7000-8000-000000000002', ...extra })
+const serverTicket = (extra = {}) => ({ id: '11111111-1111-7111-8111-111111111111', number: 'WO-000001',
+  tenantId: '22222222-2222-7222-8222-222222222222', organizationId: '33333333-3333-7333-8333-333333333333',
+  ownerUserId: '44444444-4444-7444-8444-444444444444', assigneeUserId: null, assigneeDisplayName: null,
   organizationName: 'Organization', ownerDisplayName: 'Owner', title: 'Original', description: '', priority: 'NORMAL', status: 'OPEN',
   version: 1, createdAt: '2026-10-17T00:00:00.000Z', updatedAt: '2026-10-17T00:00:00.000Z', ...extra })
-const publication = (extra = {}) => ({ publicationId: '55555555-5555-4555-8555-555555555555', recipientCount: 1,
+const publication = (extra = {}) => ({ publicationId: '55555555-5555-7555-8555-555555555555', recipientCount: 1,
   deliveryCount: 1, duplicate: false, createdAt: '2026-10-17T00:00:00Z', ...extra })
 
 test('SELF follows creator ownership and never assignee identity; missing functional/data authorization stays hidden', () => {
   assert.equal(canTicket(props(), 'read', ticket()), true)
-  assert.equal(canTicket(props(), 'read', ticket({ ownerUserId: 'other', assigneeUserId: 'user-1' })), false)
+  assert.equal(canTicket(props(), 'read', ticket({ ownerUserId: '0199fe00-0000-7000-8000-000000000201', assigneeUserId: '0199fe00-0000-7000-8000-000000000001' })), false)
   assert.equal(canTicket(props({ permissions: [] }), 'read', ticket()), false)
   assert.equal(canTicket(props({ dataGrants: [] }), 'read', ticket()), false)
-  assert.equal(canTicket(props(), 'read', ticket({ tenantId: 'other-tenant' })), false)
+  assert.equal(canTicket(props(), 'read', ticket({ tenantId: '0199fe00-0000-7000-8000-000000000202' })), false)
   assert.equal(canTicket(props({ dataGrants: [grant('constructor')] }), 'create'), false)
 })
 
 test('ORG/ORG_SUBTREE/TENANT scopes and cross-organization assignment follow distinct bounds', () => {
-  const other = ticket({ organizationId: 'org-2', ownerUserId: 'other' })
+  const other = ticket({ organizationId: '0199fe00-0000-7000-8000-000000000005', ownerUserId: '0199fe00-0000-7000-8000-000000000201' })
   assert.equal(canTicket(props({ dataGrants: [grant('ORG')] }), 'read', other), false)
   assert.equal(canTicket(props({ dataGrants: [grant('ORG_SUBTREE')] }), 'read', other), true)
   assert.equal(canTicket(props({ dataGrants: [grant('TENANT')] }), 'read', other), true)
-  const originalOwn = ticket({ organizationId: 'org-2' })
+  const originalOwn = ticket({ organizationId: '0199fe00-0000-7000-8000-000000000005' })
   assert.equal(canTicket(props(), 'update', originalOwn), true)
   assert.equal(canAssign(props(), originalOwn), false)
   assert.equal(canAssign(props({ dataGrants: [grant('ORG_SUBTREE', 'update')] }), originalOwn), true)
@@ -51,13 +51,13 @@ test('ORG/ORG_SUBTREE/TENANT scopes and cross-organization assignment follow dis
 test('child-context presentation denies owned ancestor and sibling tickets across every grant scope', () => {
   for (const scope of ['SELF', 'ORG_SUBTREE', 'TENANT']) {
     const dataGrants = ['read', 'update', 'delete'].map((action) => grant(scope, action,
-      { organizationIds: scope === 'TENANT' ? [] : ['org-1', 'org-2', 'org-parent', 'org-sibling'] }))
+      { organizationIds: scope === 'TENANT' ? [] : ['0199fe00-0000-7000-8000-000000000004', '0199fe00-0000-7000-8000-000000000005', '0199fe00-0000-7000-8000-000000000006', '0199fe00-0000-7000-8000-000000000007'] }))
     dataGrants.push(grant(scope, 'publish', { resource: 'notification',
-      organizationIds: scope === 'TENANT' ? [] : ['org-1', 'org-2', 'org-parent', 'org-sibling'] }))
+      organizationIds: scope === 'TENANT' ? [] : ['0199fe00-0000-7000-8000-000000000004', '0199fe00-0000-7000-8000-000000000005', '0199fe00-0000-7000-8000-000000000006', '0199fe00-0000-7000-8000-000000000007'] }))
     const context = props({ dataGrants })
-    assert.equal(canTicket(context, 'read', ticket({ organizationId: 'org-2' })), true)
-    for (const organizationId of ['org-parent', 'org-sibling']) {
-      const row = ticket({ organizationId, assigneeUserId: 'user-1' })
+    assert.equal(canTicket(context, 'read', ticket({ organizationId: '0199fe00-0000-7000-8000-000000000005' })), true)
+    for (const organizationId of ['0199fe00-0000-7000-8000-000000000006', '0199fe00-0000-7000-8000-000000000007']) {
+      const row = ticket({ organizationId, assigneeUserId: '0199fe00-0000-7000-8000-000000000001' })
       for (const action of ['read', 'update', 'delete']) assert.equal(canTicket(context, action, row), false)
       assert.equal(canAssign(context, row), false)
       assert.equal(canRemind(context, row), false)
@@ -69,13 +69,13 @@ test('child-context presentation denies owned ancestor and sibling tickets acros
 test('legacy presentation context defaults to current organization and invalid ceilings expose no actions', () => {
   const legacy = props({ organizationScopeIds: undefined, dataGrants: [grant('TENANT')] })
   assert.equal(canTicket(legacy, 'read', ticket()), true)
-  assert.equal(canTicket(legacy, 'read', ticket({ organizationId: 'org-2' })), false)
+  assert.equal(canTicket(legacy, 'read', ticket({ organizationId: '0199fe00-0000-7000-8000-000000000005' })), false)
   assert.equal(visibleScope(legacy), 'ORG')
-  for (const organizationScopeIds of [[], ['org-sibling'], ['org-1', null], 'org-1']) {
+  for (const organizationScopeIds of [[], ['0199fe00-0000-7000-8000-000000000007'], ['0199fe00-0000-7000-8000-000000000004', null], '0199fe00-0000-7000-8000-000000000004']) {
     assert.equal(canTicket(props({ organizationScopeIds }), 'create'), false)
   }
   const platformRoot = props({ organizationScopeIds: null, dataGrants: [grant('TENANT')] })
-  assert.equal(canTicket(platformRoot, 'read', ticket({ organizationId: 'org-sibling' })), true)
+  assert.equal(canTicket(platformRoot, 'read', ticket({ organizationId: '0199fe00-0000-7000-8000-000000000007' })), true)
   assert.equal(visibleScope(platformRoot), 'TENANT')
 })
 
@@ -127,7 +127,7 @@ test('assignee directory can search and page beyond the first 50 direct members'
   const client = new WorkOrdersClient({ fetchImpl: async (requested) => {
     url = requested; return new Response(JSON.stringify({ records: [], total: 51, page: 2, size: 50 }))
   } })
-  client.update(props()); await client.assignees('update', 'org-1', undefined, { q: '王', page: 2, size: 50 })
+  client.update(props()); await client.assignees('update', '0199fe00-0000-7000-8000-000000000004', undefined, { q: '王', page: 2, size: 50 })
   const params = new URL(url, 'https://app.test').searchParams
   assert.equal(params.get('q'), '王'); assert.equal(params.get('page'), '2'); assert.equal(params.get('action'), 'update')
   client.stop()
@@ -141,11 +141,11 @@ test('context replacement immediately aborts requests and rejects delayed bodies
     return delayedResponse(body.promise)
   } })
   client.update(props({ signal: controller.signal }))
-  const requesting = client.detail('ticket-1')
+  const requesting = client.detail('0199fe00-0000-7000-8000-000000000008')
   await Promise.resolve(); controller.abort()
   assert.equal(requestSignal.aborted, true)
   assert.equal(client.current(), null)
-  client.update(props({ token: 'new-app-token', contextEpoch: 2, organization: { id: 'org-2' } }))
+  client.update(props({ token: 'new-app-token', contextEpoch: 2, organization: { id: '0199fe00-0000-7000-8000-000000000005' } }))
   body.resolve(JSON.stringify({ oldOrganization: true }))
   await assert.rejects(requesting, (error) => error.name === 'AbortError')
   assert.ok(cleared >= 2)
@@ -202,7 +202,7 @@ test('same epoch and signal cannot hide changed authorization or an invalid repl
 test('version conflicts preserve HTTP status for explicit review instead of automatically overwriting a record', async () => {
   const client = new WorkOrdersClient({ fetchImpl: async () => new Response(JSON.stringify({ code: 'CONFLICT', message: '工单已更新' }), { status: 409 }) })
   client.update(props())
-  await assert.rejects(client.updateTicket('ticket-1', { version: 1, title: 'draft' }), (error) => error instanceof BusinessError && error.status === 409)
+  await assert.rejects(client.updateTicket('0199fe00-0000-7000-8000-000000000008', { version: 1, title: 'draft' }), (error) => error instanceof BusinessError && error.status === 409)
   client.stop()
 })
 
@@ -210,14 +210,14 @@ test('an authoritative 401 invalidates current context and rejects another delay
   const body = deferred()
   let pendingSignal
   const client = new WorkOrdersClient({ fetchImpl: async (url, options) => {
-    if (url.includes('/tickets/ticket-1')) {
+    if (url.includes('/tickets/0199fe00-0000-7000-8000-000000000008')) {
       pendingSignal = options.signal
       return delayedResponse(body.promise)
     }
     return new Response(JSON.stringify({ message: '已撤销' }), { status: 401 })
   } })
   client.update(props())
-  const pending = client.detail('ticket-1')
+  const pending = client.detail('0199fe00-0000-7000-8000-000000000008')
   await Promise.resolve()
   await assert.rejects(client.list({}), (error) => error.status === 401)
   assert.equal(client.current(), null); assert.equal(pendingSignal.aborted, true)
@@ -256,8 +256,8 @@ test('independent manual reminder sends only stable intent key, never another ti
   const requests = [], client = new WorkOrdersClient({ fetchImpl: async (url, options) => {
     requests.push({ url, body: JSON.parse(options.body), method: options.method }); return new Response(JSON.stringify(publication()))
   } })
-  client.update(props()); await client.remind('ticket-1', 'ticket:ticket-1:manual:event')
-  assert.deepEqual(requests, [{ url: '/work-orders-api/tickets/ticket-1/remind', method: 'POST', body: { idempotencyKey: 'ticket:ticket-1:manual:event' } }])
+  client.update(props()); await client.remind('0199fe00-0000-7000-8000-000000000008', 'ticket:0199fe00-0000-7000-8000-000000000008:manual:event')
+  assert.deepEqual(requests, [{ url: '/work-orders-api/tickets/0199fe00-0000-7000-8000-000000000008/remind', method: 'POST', body: { idempotencyKey: 'ticket:0199fe00-0000-7000-8000-000000000008:manual:event' } }])
   client.stop()
 })
 
@@ -267,7 +267,7 @@ test('shared registered SDK distinguishes permission, conflict, network and prot
     [() => new Response('mock-app-token', { status: 409 }), 'CONFLICT', 409],
     [() => { throw new Error('mock-app-token') }, 'NETWORK', 503], [() => new Response('mock-app-token'), 'PROTOCOL', 502]]) {
     const client = new WorkOrdersClient({ fetchImpl: response })
-    assert.equal(client.sdkVersion, '2.0.0'); client.update(props())
+    assert.equal(client.sdkVersion, '3.0.0'); client.update(props())
     await assert.rejects(client.list({}), (error) => {
       assert.ok(error instanceof BusinessError); assert.equal(error.kind, kind); assert.equal(error.status, status)
       assert.match(error.requestId, /^[0-9a-f-]{36}$/i); assert.equal(String(error).includes('mock-app-token'), false)
@@ -300,8 +300,8 @@ test('unknown mutation responses retain typed outcomes without automatic retries
       const client = new WorkOrdersClient({ fetchImpl: () => { requests++; return response() } })
       client.update(props())
       const pending = operation === 'create' ? client.create({ title: 'draft' }, 'same-key')
-        : operation === 'update' ? client.updateTicket('ticket-1', { version: 1, title: 'draft' })
-        : operation === 'remove' ? client.remove('ticket-1', 1) : client.remind('ticket-1', 'same-key')
+        : operation === 'update' ? client.updateTicket('0199fe00-0000-7000-8000-000000000008', { version: 1, title: 'draft' })
+        : operation === 'remove' ? client.remove('0199fe00-0000-7000-8000-000000000008', 1) : client.remind('0199fe00-0000-7000-8000-000000000008', 'same-key')
       await assert.rejects(pending, error => {
         assert.equal(error.outcome, operation === 'create' ? 'CREATE_RESULT_UNKNOWN' : operation === 'remind' ? 'REMINDER_RESULT_UNKNOWN' : 'WRITE_RESULT_UNKNOWN')
         assert.equal(String(error).includes('mock-app-token'), false)
@@ -319,7 +319,7 @@ test('only bounded allowlisted Rust 503 codes can identify reminder preparation 
     ['{"code":"UNTRUSTED_REMOTE_TEXT"}', 'REMINDER_RESULT_UNKNOWN'], ['broken', 'REMINDER_RESULT_UNKNOWN']]) {
     const client = new WorkOrdersClient({ fetchImpl: async () => new Response(body, { status: 503 }) })
     client.update(props())
-    await assert.rejects(client.remind('ticket-1', 'event'), error => {
+    await assert.rejects(client.remind('0199fe00-0000-7000-8000-000000000008', 'event'), error => {
       assert.equal(error.outcome, outcome)
       if (outcome === 'REMINDER_PREPARATION_UNKNOWN') assert.equal(error.code, outcome)
       assert.equal(String(error).includes('mock-app-token'), false)
@@ -332,12 +332,12 @@ test('only bounded allowlisted Rust 503 codes can identify reminder preparation 
 test('a deterministic reminder rejection does not claim an unknown publication and 401 remains immediate', async () => {
   for (const status of [400, 403, 404, 409]) {
     const client = new WorkOrdersClient({ fetchImpl: async () => new Response('{"code":"REMINDER_PREPARATION_UNKNOWN"}', { status }) })
-    client.update(props()); await assert.rejects(client.remind('ticket-1', 'event'), error => error.status === status && error.outcome === undefined)
+    client.update(props()); await assert.rejects(client.remind('0199fe00-0000-7000-8000-000000000008', 'event'), error => error.status === status && error.outcome === undefined)
     client.stop()
   }
   const never = new ReadableStream({ start() {} })
   const client = new WorkOrdersClient({ fetchImpl: async () => new Response(never, { status: 401 }) })
-  client.update(props()); await assert.rejects(client.remind('ticket-1', 'event'), error => error.status === 401)
+  client.update(props()); await assert.rejects(client.remind('0199fe00-0000-7000-8000-000000000008', 'event'), error => error.status === 401)
   assert.equal(client.current(), null)
 })
 
@@ -373,14 +373,14 @@ test('context cancellation while reading Rust recovery metadata rejects late dat
     readBody = controller; bodyStarted.resolve()
   } }), { status: 503 }) })
   client.update(original)
-  const intent = intents.prepareReminder(original, 'ticket-1')
+  const intent = intents.prepareReminder(original, '0199fe00-0000-7000-8000-000000000008')
   const pending = client.remind(intent.ticketId, intent.key).then(value => ({ value }), error => ({ error }))
   await bodyStarted.promise; host.abort()
   const renewed = props({ contextEpoch: 2, contextVersion: 'ctx-2', token: 'renewed' })
   client.update(renewed)
   try { readBody.enqueue(new TextEncoder().encode('{"code":"REMINDER_PREPARATION_UNKNOWN"}')); readBody.close() } catch {}
   assert.equal((await pending).error?.name, 'AbortError')
-  assert.equal(intents.getReminder(renewed, 'ticket-1'), intent)
+  assert.equal(intents.getReminder(renewed, '0199fe00-0000-7000-8000-000000000008'), intent)
   client.stop()
 })
 
@@ -395,8 +395,8 @@ test('malformed successful mutation DTOs are unknown protocol outcomes and canno
       const client = new WorkOrdersClient({ fetchImpl: async () => { calls++; return new Response(JSON.stringify(body), { status }) } })
       client.update(original)
       const pending = operation === 'create' ? client.create(intent.body, intent.key) : operation === 'update'
-        ? client.updateTicket('ticket-1', { title: 'draft', version: 1 }) : operation === 'remove'
-          ? client.remove('ticket-1', 1) : client.remind('ticket-1', 'event')
+        ? client.updateTicket('0199fe00-0000-7000-8000-000000000008', { title: 'draft', version: 1 }) : operation === 'remove'
+          ? client.remove('0199fe00-0000-7000-8000-000000000008', 1) : client.remind('0199fe00-0000-7000-8000-000000000008', 'event')
       await assert.rejects(pending, error => error instanceof BusinessError && error.kind === 'PROTOCOL' &&
         error.outcome === (operation === 'create' ? 'CREATE_RESULT_UNKNOWN' : operation === 'remind' ? 'REMINDER_RESULT_UNKNOWN' : 'WRITE_RESULT_UNKNOWN'))
       assert.equal(calls, 1); assert.equal(intents.getCreate(original), intent)
@@ -410,8 +410,8 @@ test('valid mutation JSON with an unexpected success status cannot confirm a com
     const client = new WorkOrdersClient({ fetchImpl: async () => new Response(JSON.stringify(body), { status: 202 }) })
     client.update(props())
     await assert.rejects(operation === 'create' ? client.create({ title: 'draft' }, 'event') : operation === 'update'
-      ? client.updateTicket('ticket-1', { version: 1, title: 'draft' }) : operation === 'remove'
-        ? client.remove('ticket-1', 1) : client.remind('ticket-1', 'event'), error => error.kind === 'PROTOCOL' && !!error.outcome)
+      ? client.updateTicket('0199fe00-0000-7000-8000-000000000008', { version: 1, title: 'draft' }) : operation === 'remove'
+        ? client.remove('0199fe00-0000-7000-8000-000000000008', 1) : client.remind('0199fe00-0000-7000-8000-000000000008', 'event'), error => error.kind === 'PROTOCOL' && !!error.outcome)
     client.stop()
   }
 })

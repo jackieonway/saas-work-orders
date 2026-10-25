@@ -1,5 +1,5 @@
 import http from 'node:http'
-import { randomUUID } from 'node:crypto'
+import { newId } from './uuid.mjs'
 import { ApiError, invalid, notFound, reject } from './errors.mjs'
 import { authorize as platformAuthorize, assertFresh, bearer, directoryScope, grantFor, member, platformJson, scopeSql, validId } from './auth.mjs'
 import { createTelemetry, metricsAllowed } from './observability.mjs'
@@ -239,7 +239,7 @@ async function dispatch(request, response, config, pool, fetchImpl, signal, meta
       const counter = await client.query('INSERT INTO work_order_counters(tenant_id,next_number) VALUES($1,1) ON CONFLICT(tenant_id) DO UPDATE SET next_number=work_order_counters.next_number+1 RETURNING next_number', [auth.context.tenant.id])
       const number = `WO-${String(counter.rows[0].next_number).padStart(6, '0')}`
       const rows = await client.query('INSERT INTO work_orders(id,number,tenant_id,organization_id,organization_name,owner_user_id,owner_display_name,assignee_user_id,assignee_display_name,title,description,priority) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *',
-        [randomUUID(), number, auth.context.tenant.id, auth.context.organization.id, auth.context.organization.name,
+        [newId(), number, auth.context.tenant.id, auth.context.organization.id, auth.context.organization.name,
           auth.context.user.id, auth.context.user.displayName?.trim() || auth.context.user.username, assignee, assigneeName, title, description, priority])
       assertFresh(auth)
       return record(rows.rows[0])

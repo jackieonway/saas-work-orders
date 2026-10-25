@@ -1,4 +1,5 @@
 import { validContext, validIdempotencyKey, PRIORITIES } from './domain.mjs'
+import { newId, validUUID } from './uuid.mjs'
 
 /** Only the business identity is retained; renewing credentials is not a new event. */
 export function identityKey(props) {
@@ -16,7 +17,7 @@ function createBody(body) {
       Object.keys(body).some(key => !['title', 'description', 'priority', 'assigneeUserId'].includes(key)) ||
       typeof body.title !== 'string' || (body.description !== undefined && typeof body.description !== 'string') ||
       (body.priority !== undefined && !Object.hasOwn(PRIORITIES, body.priority)) ||
-      (body.assigneeUserId !== undefined && body.assigneeUserId !== null && typeof body.assigneeUserId !== 'string')) {
+      (body.assigneeUserId !== undefined && body.assigneeUserId !== null && !validUUID(body.assigneeUserId))) {
     throw new TypeError('创建意图必须使用工单创建正文')
   }
   // Copy only primitive DTO fields: never retain props, credentials or a mutable draft.
@@ -29,10 +30,10 @@ function createBody(body) {
 export class IntentStore {
   #creates = new Map()
   #reminders = new Map()
-  #randomUUID
-  constructor({ randomUUID = () => globalThis.crypto.randomUUID() } = {}) { this.#randomUUID = randomUUID }
+  #newId
+  constructor({ id = newId } = {}) { this.#newId = id }
   #key(kind) {
-    const key = kind + ':' + this.#randomUUID()
+    const key = kind + ':' + this.#newId()
     if (!validIdempotencyKey(key)) throw new TypeError('无法生成有效的操作事件键')
     return key
   }
@@ -52,7 +53,7 @@ export class IntentStore {
   getReminder(props, ticketId) { return this.#reminders.get(identityKey(props))?.get(ticketId) || null }
   prepareReminder(props, ticketId) {
     const identity = requiredIdentity(props)
-    if (typeof ticketId !== 'string' || !/^[a-zA-Z0-9-]{1,128}$/.test(ticketId)) throw new TypeError('提醒需要有效的工单标识')
+    if (!validUUID(ticketId)) throw new TypeError('提醒需要有效的工单标识')
     let reminders = this.#reminders.get(identity)
     const existing = reminders?.get(ticketId)
     if (existing) return existing

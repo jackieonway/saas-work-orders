@@ -17,22 +17,22 @@ const appCode = (Array.isArray(bundle) ? bundle.flatMap(result => result.output)
 const deferred = () => { let resolve; const promise = new Promise((done) => { resolve = done }); return { promise, resolve } }
 const reply = (status, body) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
 const deny = (status) => reply(status, { code: 'DENIED', message: '当前操作未获授权' })
-const ticket = (id = '00000000-0000-4000-8000-000000000001', extra = {}) => ({ id, number: id === '00000000-0000-4000-8000-000000000001' ? 'WO-000001' : 'WO-000002',
-  tenantId: '10000000-0000-4000-8000-000000000001', organizationId: '20000000-0000-4000-8000-000000000001', ownerUserId: '30000000-0000-4000-8000-000000000001', assigneeUserId: '30000000-0000-4000-8000-000000000002',
+const ticket = (id = '00000000-0000-7000-8000-000000000001', extra = {}) => ({ id, number: id === '00000000-0000-7000-8000-000000000001' ? 'WO-000001' : 'WO-000002',
+  tenantId: '10000000-0000-7000-8000-000000000001', organizationId: '20000000-0000-7000-8000-000000000001', ownerUserId: '30000000-0000-7000-8000-000000000001', assigneeUserId: '30000000-0000-7000-8000-000000000002',
   organizationName: '测试组织', ownerDisplayName: '创建人', assigneeDisplayName: '处理人甲',
-  title: id === '00000000-0000-4000-8000-000000000001' ? '服务器返回的工单甲' : '服务器返回的工单乙', description: '服务端原始描述',
+  title: id === '00000000-0000-7000-8000-000000000001' ? '服务器返回的工单甲' : '服务器返回的工单乙', description: '服务端原始描述',
   priority: 'NORMAL', status: 'OPEN', version: 1, createdAt: '2026-10-02T01:00:00.000Z', updatedAt: '2026-10-02T01:00:00.000Z', ...extra })
-const directory = { records: [{ userId: '30000000-0000-4000-8000-000000000002', displayName: '处理人甲', organizationId: '20000000-0000-4000-8000-000000000001' }], total: 75, page: 1, size: 50 }
+const directory = { records: [{ userId: '30000000-0000-7000-8000-000000000002', displayName: '处理人甲', organizationId: '20000000-0000-7000-8000-000000000001' }], total: 75, page: 1, size: 50 }
 
 function context(epoch = 1, routePath = '/micro/work-orders', extra = {}) {
   const actions = ['read', 'create', 'update', 'delete', 'export']
   return { contractVersion: '2.0', appCode: 'work-orders', basePath: '/micro/work-orders', routePath,
     contextVersion: 'fixture-context-' + epoch, contextEpoch: epoch, token: 'fixture-app-token-' + epoch,
     expiresAt: new Date(Date.now() + 60_000).toISOString(), tokenExpiresAt: new Date(Date.now() + 60_000).toISOString(),
-    signal: new AbortController().signal, user: { id: '30000000-0000-4000-8000-000000000001', displayName: '创建人' },
-    tenant: { id: '10000000-0000-4000-8000-000000000001', name: '测试租户' }, organization: { id: '20000000-0000-4000-8000-000000000001', name: '测试组织' }, theme: 'light',
+    signal: new AbortController().signal, user: { id: '30000000-0000-7000-8000-000000000001', displayName: '创建人' },
+    tenant: { id: '10000000-0000-7000-8000-000000000001', name: '测试租户' }, organization: { id: '20000000-0000-7000-8000-000000000001', name: '测试组织' }, theme: 'light',
     permissions: actions.map((action) => 'ticket:' + action),
-    dataGrants: actions.map((action) => ({ resource: 'ticket', action, scope: 'SELF', subjectUserId: '30000000-0000-4000-8000-000000000001', tenantId: '10000000-0000-4000-8000-000000000001', organizationIds: ['20000000-0000-4000-8000-000000000001'] })),
+    dataGrants: actions.map((action) => ({ resource: 'ticket', action, scope: 'SELF', subjectUserId: '30000000-0000-7000-8000-000000000001', tenantId: '10000000-0000-7000-8000-000000000001', organizationIds: ['20000000-0000-7000-8000-000000000001'] })),
     onNavigate() {}, onNotify() {}, ...extra }
 }
 
@@ -121,8 +121,8 @@ test('actual app unit: legacy new URL remains a read and never opens a creation 
   await app.mount(initial)
   assert.equal(app.state.editor, null)
   assert.equal(app.state.mode, 'detail')
-  assert.equal(app.state.detail, null, 'the Rust API rejects a non UUID detail id')
-  assert.equal(app.requests.some(request => request.method === 'GET' && request.url.pathname.endsWith('/tickets/new')), true)
+  assert.equal(app.state.detail, null, 'the client rejects a non UUIDv7 detail id before transport')
+  assert.equal(app.requests.some(request => request.method === 'GET' && request.url.pathname.endsWith('/tickets/new')), false)
   assert.equal(app.requests.some(request => request.method === 'POST'), false)
   assert.equal(app.nodes('create-ticket').length, 0)
   assert.deepEqual(app.failures, [])
@@ -131,7 +131,7 @@ test('actual app unit: legacy new URL remains a read and never opens a creation 
 test('actual app unit: HTTP 401 invalidates the app and clears a cached ticket and open delete confirmation', async (t) => {
   const app = harness(); t.after(() => app.unmount())
   await app.mount(); await app.click('open-ticket'); await app.click('delete-ticket')
-  app.enqueue('DELETE', '/tickets/00000000-0000-4000-8000-000000000001', deny(401))
+  app.enqueue('DELETE', '/tickets/00000000-0000-7000-8000-000000000001', deny(401))
   await app.click('confirm-delete')
   assert.equal(app.node('work-orders-app').props['data-context-active'], 'false')
   assert.equal(app.nodes('ticket-detail').length, 0)
@@ -157,7 +157,7 @@ test('actual app unit: theme updates retain a pending submit and do not reload c
   assert.equal(app.requests.filter(request => request.method === 'GET' && request.url.pathname.endsWith('/tickets')).length, reads)
   pending.resolve(reply(201, ticket()))
   await settle()
-  assert.equal(app.state.detail?.id, '00000000-0000-4000-8000-000000000001')
+  assert.equal(app.state.detail?.id, '00000000-0000-7000-8000-000000000001')
   assert.equal(app.state.editor, null)
 })
 
@@ -182,28 +182,28 @@ test('actual app unit: removing read authorization clears sensitive editor snaps
 })
 
 test('actual app unit: route changes cancel related reads without cancelling an independent pending write', async t => {
-  const app = harness([ticket(), ticket('00000000-0000-4000-8000-000000000002')]), initial = context(1, '/micro/work-orders/tickets/00000000-0000-4000-8000-000000000001')
+  const app = harness([ticket(), ticket('00000000-0000-7000-8000-000000000002')]), initial = context(1, '/micro/work-orders/tickets/00000000-0000-7000-8000-000000000001')
   const write = deferred(), detail = deferred(); t.after(() => app.unmount())
   await app.mount(initial); await app.click('edit-ticket'); app.input('ticket-title', '独立写入')
-  app.enqueue('PATCH', '/tickets/00000000-0000-4000-8000-000000000001', write.promise); await app.submit()
+  app.enqueue('PATCH', '/tickets/00000000-0000-7000-8000-000000000001', write.promise); await app.submit()
   const saving = app.requests.find(request => request.method === 'PATCH')
-  app.enqueue('GET', '/tickets/00000000-0000-4000-8000-000000000002', detail.promise)
-  await app.update({ ...initial, routePath: '/micro/work-orders/tickets/00000000-0000-4000-8000-000000000002' })
-  const reading = app.requests.find(request => request.url.pathname.endsWith('/00000000-0000-4000-8000-000000000002'))
+  app.enqueue('GET', '/tickets/00000000-0000-7000-8000-000000000002', detail.promise)
+  await app.update({ ...initial, routePath: '/micro/work-orders/tickets/00000000-0000-7000-8000-000000000002' })
+  const reading = app.requests.find(request => request.url.pathname.endsWith('/00000000-0000-7000-8000-000000000002'))
   assert.equal(saving.signal.aborted, false)
   await app.update({ ...initial, routePath: '/micro/work-orders' })
   assert.equal(reading.signal.aborted, true)
   assert.equal(saving.signal.aborted, false)
   assert.equal(app.requests.filter(request => request.method === 'GET' && request.url.pathname.endsWith('/tickets')).length, 1)
-  detail.resolve(reply(200, ticket('00000000-0000-4000-8000-000000000002'))); await settle()
+  detail.resolve(reply(200, ticket('00000000-0000-7000-8000-000000000002'))); await settle()
   assert.equal(app.state.mode, 'list'); assert.equal(app.state.detail, null)
-  write.resolve(reply(200, ticket('00000000-0000-4000-8000-000000000001', { title: '独立写入', version: 2 }))); await settle()
+  write.resolve(reply(200, ticket('00000000-0000-7000-8000-000000000001', { title: '独立写入', version: 2 }))); await settle()
   assert.equal(app.state.mode, 'list'); assert.equal(app.state.detail, null)
   assert.equal(app.state.busy.save, false)
 })
 
 test('actual app unit: host cancellation after a theme update clears server snapshots while retaining only the draft', async t => {
-  const source = new AbortController(), app = harness(), initial = context(1, '/micro/work-orders/tickets/00000000-0000-4000-8000-000000000001', { signal: source.signal })
+  const source = new AbortController(), app = harness(), initial = context(1, '/micro/work-orders/tickets/00000000-0000-7000-8000-000000000001', { signal: source.signal })
   t.after(() => app.unmount())
   await app.mount(initial); await app.click('edit-ticket'); app.input('ticket-title', '我的草稿')
   await app.update({ ...initial, theme: 'dark' })
@@ -236,11 +236,11 @@ test('actual app unit: update 409 followed by detail 404 drops server caches and
   const app = harness(); t.after(() => app.unmount())
   await app.mount(); await app.click('open-ticket'); await app.click('edit-ticket')
   app.input('ticket-title', '我尚未提交的修改')
-  app.enqueue('PATCH', '/tickets/00000000-0000-4000-8000-000000000001', reply(409, { code: 'VERSION_CONFLICT', message: '版本冲突' }))
-  app.enqueue('GET', '/tickets/00000000-0000-4000-8000-000000000001', deny(404))
+  app.enqueue('PATCH', '/tickets/00000000-0000-7000-8000-000000000001', reply(409, { code: 'VERSION_CONFLICT', message: '版本冲突' }))
+  app.enqueue('GET', '/tickets/00000000-0000-7000-8000-000000000001', deny(404))
   await app.submit()
   assert.equal(app.state.detail, null)
-  assert.equal(app.state.rows.some((row) => row.id === '00000000-0000-4000-8000-000000000001'), false)
+  assert.equal(app.state.rows.some((row) => row.id === '00000000-0000-7000-8000-000000000001'), false)
   assert.equal(app.state.editor.latest, null)
   assert.equal(app.node('ticket-title').props.value, '我尚未提交的修改')
   assert.equal(!!app.node('use-latest-version').props.disabled, true)
@@ -252,12 +252,12 @@ test('actual app unit: context renewal clears an earlier conflict latest before 
   const app = harness(), pending = deferred(); t.after(() => app.unmount())
   await app.mount(); await app.click('open-ticket'); await app.click('edit-ticket')
   app.input('ticket-title', '保留的输入')
-  app.enqueue('PATCH', '/tickets/00000000-0000-4000-8000-000000000001', reply(409, { message: '版本冲突' }))
-  app.enqueue('GET', '/tickets/00000000-0000-4000-8000-000000000001', reply(200, ticket('00000000-0000-4000-8000-000000000001', { version: 2, title: '服务端较新标题' })))
+  app.enqueue('PATCH', '/tickets/00000000-0000-7000-8000-000000000001', reply(409, { message: '版本冲突' }))
+  app.enqueue('GET', '/tickets/00000000-0000-7000-8000-000000000001', reply(200, ticket('00000000-0000-7000-8000-000000000001', { version: 2, title: '服务端较新标题' })))
   await app.submit()
   assert.equal(!!app.node('use-latest-version').props.disabled, false)
-  app.enqueue('GET', '/tickets/00000000-0000-4000-8000-000000000001', pending.promise)
-  await app.update(context(2, '/micro/work-orders/tickets/00000000-0000-4000-8000-000000000001'))
+  app.enqueue('GET', '/tickets/00000000-0000-7000-8000-000000000001', pending.promise)
+  await app.update(context(2, '/micro/work-orders/tickets/00000000-0000-7000-8000-000000000001'))
   assert.equal(app.state.editor.latest, null)
   assert.equal(!!app.node('use-latest-version').props.disabled, true)
   assert.equal(app.node('ticket-title').props.value, '保留的输入')
@@ -268,19 +268,19 @@ test('actual app unit: context renewal clears an earlier conflict latest before 
 })
 
 test('actual app unit: a late detail denial cannot clear a different ticket opened in the same context', async (t) => {
-  const app = harness([ticket(), ticket('00000000-0000-4000-8000-000000000002')]), pending = deferred(); t.after(() => app.unmount())
+  const app = harness([ticket(), ticket('00000000-0000-7000-8000-000000000002')]), pending = deferred(); t.after(() => app.unmount())
   await app.mount(); await app.click('open-ticket'); await app.click('edit-ticket')
-  app.enqueue('PATCH', '/tickets/00000000-0000-4000-8000-000000000001', reply(409, { message: '版本冲突' }))
-  app.enqueue('GET', '/tickets/00000000-0000-4000-8000-000000000001', pending.promise)
+  app.enqueue('PATCH', '/tickets/00000000-0000-7000-8000-000000000001', reply(409, { message: '版本冲突' }))
+  app.enqueue('GET', '/tickets/00000000-0000-7000-8000-000000000001', pending.promise)
   await app.submit()
   const cancel = [...walk(app.node('ticket-editor'))].find((node) => node.type === 'button' && textOf(node) === '取消')
   assert.ok(cancel); cancel.props.onClick(); await settle()
   await app.click('back-to-list')
-  const secondRow = app.nodes('ticket-row').find((row) => row.props['data-ticket-id'] === '00000000-0000-4000-8000-000000000002')
+  const secondRow = app.nodes('ticket-row').find((row) => row.props['data-ticket-id'] === '00000000-0000-7000-8000-000000000002')
   const openSecond = [...walk(secondRow)].find((node) => node.props['data-testid'] === 'open-ticket')
   openSecond.props.onClick(); await settle()
   pending.resolve(deny(404)); await settle()
-  assert.equal(app.state.detail.id, '00000000-0000-4000-8000-000000000002')
+  assert.equal(app.state.detail.id, '00000000-0000-7000-8000-000000000002')
   assert.equal(app.node('detail-number').children[0], 'WO-000002')
   assert.equal(app.state.rows.length, 2, 'a retired target denial does not alter the current list cache')
   assert.deepEqual(app.failures, [])
@@ -297,7 +297,7 @@ test('actual app unit: directory 403 clears candidates and locks assignment whil
   assert.equal(app.node('ticket-title').props.value, '目录被拒绝时保留标题')
   assert.equal(app.node('ticket-description').props.value, '目录被拒绝时保留描述')
   assert.equal(!!app.node('save-ticket').props.disabled, false, 'directory denial does not deny ordinary ticket fields')
-  app.enqueue('PATCH', '/tickets/00000000-0000-4000-8000-000000000001', reply(200, ticket('00000000-0000-4000-8000-000000000001', { title: '目录被拒绝时保留标题', version: 2 })))
+  app.enqueue('PATCH', '/tickets/00000000-0000-7000-8000-000000000001', reply(200, ticket('00000000-0000-7000-8000-000000000001', { title: '目录被拒绝时保留标题', version: 2 })))
   await app.submit()
   const written = app.requests.findLast((request) => request.method === 'PATCH')
   assert.equal(Object.hasOwn(written.body, 'assigneeUserId'), false, 'locked assignment is omitted from the actual PATCH')
@@ -312,7 +312,7 @@ for (const kind of ['create', 'update']) {
     if (kind === 'create') await app.click('create-ticket')
     else { await app.click('open-ticket'); await app.click('edit-ticket') }
     app.input('ticket-title', '403 后仍在的 ' + kind + ' 草稿')
-    const method = kind === 'create' ? 'POST' : 'PATCH', path = kind === 'create' ? '/tickets' : '/tickets/00000000-0000-4000-8000-000000000001'
+    const method = kind === 'create' ? 'POST' : 'PATCH', path = kind === 'create' ? '/tickets' : '/tickets/00000000-0000-7000-8000-000000000001'
     app.enqueue(method, path, deny(403))
     await app.submit()
     assert.equal(app.node('ticket-title').props.value, '403 后仍在的 ' + kind + ' 草稿')
@@ -320,10 +320,10 @@ for (const kind of ['create', 'update']) {
     const count = app.requests.filter((request) => request.method === method).length
     await app.submit()
     assert.equal(app.requests.filter((request) => request.method === method).length, count, 'actual submit handler blocks a second denied write')
-    await app.update(context(2, '/micro/work-orders/' + (kind === 'create' ? 'ticket-create' : 'tickets/00000000-0000-4000-8000-000000000001')))
+    await app.update(context(2, '/micro/work-orders/' + (kind === 'create' ? 'ticket-create' : 'tickets/00000000-0000-7000-8000-000000000001')))
     assert.equal(app.node('ticket-title').props.value, '403 后仍在的 ' + kind + ' 草稿')
     assert.equal(!!app.node('save-ticket').props.disabled, false)
-    app.enqueue(method, path, reply(kind === 'create' ? 201 : 200, ticket('00000000-0000-4000-8000-000000000001', { title: '403 后仍在的 ' + kind + ' 草稿', version: kind === 'create' ? 1 : 2 })))
+    app.enqueue(method, path, reply(kind === 'create' ? 201 : 200, ticket('00000000-0000-7000-8000-000000000001', { title: '403 后仍在的 ' + kind + ' 草稿', version: kind === 'create' ? 1 : 2 })))
     await app.submit()
     assert.equal(app.nodes('ticket-editor').length, 0)
     assert.equal(app.state.detail.title, '403 后仍在的 ' + kind + ' 草稿')
@@ -340,7 +340,7 @@ test('actual app unit: an unknown creation explicitly recovers the immutable ori
   assert.ok(first.headers.get('Idempotency-Key'), 'creation uses the required stable header')
   assert.equal(app.node('ticket-title').props.disabled, true, 'the unknown event body is immutable')
   assert.match(app.text(), /原事件|原键/)
-  app.enqueue('POST', '/tickets', reply(201, ticket('00000000-0000-4000-8000-000000000001', { title: '可能已经提交的创建' })))
+  app.enqueue('POST', '/tickets', reply(201, ticket('00000000-0000-7000-8000-000000000001', { title: '可能已经提交的创建' })))
   await app.click('recover-create')
   const writes = app.requests.filter(request => request.method === 'POST')
   assert.equal(writes.length, 2)
@@ -355,8 +355,8 @@ test('actual app unit: organization switches cancel old creation and isolate its
   await app.mount(original); await app.click('create-ticket'); app.input('ticket-title', '组织甲的创建')
   app.enqueue('POST', '/tickets', pending.promise); await app.submit()
   const first = app.requests.find(request => request.method === 'POST')
-  const other = context(2, '/micro/work-orders/ticket-create', { organization: { id: '20000000-0000-4000-8000-000000000002', name: '组织乙' },
-    dataGrants: original.dataGrants.map(grant => ({ ...grant, organizationIds: ['20000000-0000-4000-8000-000000000002'] })) })
+  const other = context(2, '/micro/work-orders/ticket-create', { organization: { id: '20000000-0000-7000-8000-000000000002', name: '组织乙' },
+    dataGrants: original.dataGrants.map(grant => ({ ...grant, organizationIds: ['20000000-0000-7000-8000-000000000002'] })) })
   await app.update(other)
   assert.equal(first.signal.aborted, true)
   assert.equal(app.node('ticket-title').props.value, '')
@@ -372,18 +372,18 @@ test('actual app unit: organization switches cancel old creation and isolate its
 
 for (const code of ['REMINDER_PREPARATION_UNKNOWN', 'REMINDER_RESULT_UNKNOWN']) {
   test('actual app unit: ' + code + ' keeps the original key for explicit recovery without changing ticket version', async t => {
-    const app = harness(), initial = context(1, '/micro/work-orders/tickets/00000000-0000-4000-8000-000000000001'); t.after(() => app.unmount())
+    const app = harness(), initial = context(1, '/micro/work-orders/tickets/00000000-0000-7000-8000-000000000001'); t.after(() => app.unmount())
     initial.permissions.push('notification:publish')
-    initial.dataGrants.push({ resource: 'notification', action: 'publish', scope: 'ORG', subjectUserId: '30000000-0000-4000-8000-000000000001', tenantId: '10000000-0000-4000-8000-000000000001', organizationIds: ['20000000-0000-4000-8000-000000000001'] })
+    initial.dataGrants.push({ resource: 'notification', action: 'publish', scope: 'ORG', subjectUserId: '30000000-0000-7000-8000-000000000001', tenantId: '10000000-0000-7000-8000-000000000001', organizationIds: ['20000000-0000-7000-8000-000000000001'] })
     await app.mount(initial)
-    app.enqueue('POST', '/tickets/00000000-0000-4000-8000-000000000001/remind', reply(503, { code, message: '结果未知' }))
+    app.enqueue('POST', '/tickets/00000000-0000-7000-8000-000000000001/remind', reply(503, { code, message: '结果未知' }))
     await app.click('remind-ticket')
     const first = app.requests.find(request => request.method === 'POST')
     assert.match(app.text(), code === 'REMINDER_PREPARATION_UNKNOWN' ? /准备|准备阶段/ : /结果尚未确认/)
     assert.equal(app.state.detail.version, 1)
     await app.update({ ...initial, theme: 'dark' })
     assert.equal(app.requests.filter(request => request.method === 'POST').length, 1)
-    app.enqueue('POST', '/tickets/00000000-0000-4000-8000-000000000001/remind', reply(200, { publicationId: '0805aef9-5c92-40b2-8db9-739577f20b1e', recipientCount: 1, deliveryCount: 1, duplicate: true, createdAt: '2026-10-17T00:00:00Z' }))
+    app.enqueue('POST', '/tickets/00000000-0000-7000-8000-000000000001/remind', reply(200, { publicationId: '0805aef9-5c92-70b2-8db9-739577f20b1e', recipientCount: 1, deliveryCount: 1, duplicate: true, createdAt: '2026-10-17T00:00:00Z' }))
     await app.click('remind-ticket')
     const writes = app.requests.filter(request => request.method === 'POST')
     assert.deepEqual(writes[1].body, first.body)
@@ -415,18 +415,18 @@ test('actual app unit: a forbidden replay does not discard an earlier unknown cr
 test('actual app unit: unknown edits require an explicit current read and version choice before another save', async t => {
   const app = harness(); t.after(() => app.unmount())
   await app.mount(); await app.click('open-ticket'); await app.click('edit-ticket'); app.input('ticket-title', '可能已保存的输入')
-  app.enqueue('PATCH', '/tickets/00000000-0000-4000-8000-000000000001', reply(503, { code: 'WRITE_RESULT_UNKNOWN' })); await app.submit()
+  app.enqueue('PATCH', '/tickets/00000000-0000-7000-8000-000000000001', reply(503, { code: 'WRITE_RESULT_UNKNOWN' })); await app.submit()
   assert.equal(app.node('ticket-title').props.value, '可能已保存的输入')
   assert.equal(app.node('save-ticket').props.disabled, true)
-  assert.equal(app.requests.filter(request => request.url.pathname.endsWith('/00000000-0000-4000-8000-000000000001') && request.method === 'GET').length, 0,
+  assert.equal(app.requests.filter(request => request.url.pathname.endsWith('/00000000-0000-7000-8000-000000000001') && request.method === 'GET').length, 0,
     'the unknown write waits for an explicit reconciliation read')
-  app.enqueue('GET', '/tickets/00000000-0000-4000-8000-000000000001', reply(200, ticket('00000000-0000-4000-8000-000000000001', { version: 2 })))
+  app.enqueue('GET', '/tickets/00000000-0000-7000-8000-000000000001', reply(200, ticket('00000000-0000-7000-8000-000000000001', { version: 2 })))
   await app.click('verify-write-result')
   assert.equal(app.node('save-ticket').props.disabled, true)
   await app.click('use-latest-version')
   assert.equal(app.node('save-ticket').props.disabled, false)
   assert.equal(app.node('ticket-title').props.value, '可能已保存的输入')
-  app.enqueue('PATCH', '/tickets/00000000-0000-4000-8000-000000000001', reply(200, ticket('00000000-0000-4000-8000-000000000001', { version: 3 }))); await app.submit()
+  app.enqueue('PATCH', '/tickets/00000000-0000-7000-8000-000000000001', reply(200, ticket('00000000-0000-7000-8000-000000000001', { version: 3 }))); await app.submit()
   assert.equal(app.requests.filter(request => request.method === 'PATCH').at(-1).body.version, 2)
   assert.deepEqual(app.failures, [])
 })
@@ -434,10 +434,10 @@ test('actual app unit: unknown edits require an explicit current read and versio
 test('actual app unit: an unknown deletion blocks a second delete until a current detail is explicitly checked', async t => {
   const app = harness(); t.after(() => app.unmount())
   await app.mount(); await app.click('open-ticket'); await app.click('delete-ticket')
-  app.enqueue('DELETE', '/tickets/00000000-0000-4000-8000-000000000001', reply(503, { code: 'WRITE_RESULT_UNKNOWN' })); await app.click('confirm-delete')
+  app.enqueue('DELETE', '/tickets/00000000-0000-7000-8000-000000000001', reply(503, { code: 'WRITE_RESULT_UNKNOWN' })); await app.click('confirm-delete')
   assert.equal(app.node('confirm-delete').props.disabled, true)
   assert.equal(app.requests.filter(request => request.method === 'DELETE').length, 1)
-  app.enqueue('GET', '/tickets/00000000-0000-4000-8000-000000000001', deny(404)); await app.click('verify-delete-result')
+  app.enqueue('GET', '/tickets/00000000-0000-7000-8000-000000000001', deny(404)); await app.click('verify-delete-result')
   assert.equal(app.nodes('delete-confirmation').length, 0)
   assert.equal(app.state.detail, null)
   assert.equal(app.requests.filter(request => request.method === 'DELETE').length, 1)
@@ -451,26 +451,26 @@ test('actual app unit: creation-only entry does not expose read routes or export
   assert.equal(create.state.editor.kind, 'create')
   assert.equal(create.nodes('ticket-row').length, 0); assert.equal(create.nodes('export-tickets').length, 0)
   assert.equal(create.requests.some(request => request.url.pathname.includes('/tickets')), false)
-  const readProps = context(1, '/micro/work-orders/tickets/00000000-0000-4000-8000-000000000001')
+  const readProps = context(1, '/micro/work-orders/tickets/00000000-0000-7000-8000-000000000001')
   readProps.permissions = ['ticket:read']; readProps.dataGrants = readProps.dataGrants.filter(grant => grant.action === 'read')
   const read = harness(); t.after(() => read.unmount()); await read.mount(readProps)
-  assert.equal(read.state.detail.id, '00000000-0000-4000-8000-000000000001'); assert.equal(read.nodes('create-ticket').length, 0)
+  assert.equal(read.state.detail.id, '00000000-0000-7000-8000-000000000001'); assert.equal(read.nodes('create-ticket').length, 0)
   assert.equal(read.nodes('edit-ticket').length, 0); assert.equal(read.nodes('remind-ticket').length, 0)
   assert.equal(read.requests.some(request => request.method !== 'GET'), false)
 })
 
 test('actual app unit: a forbidden reminder recovery survives renewal and still uses the original event', async t => {
-  const app = harness(), initial = context(1, '/micro/work-orders/tickets/00000000-0000-4000-8000-000000000001'); t.after(() => app.unmount())
+  const app = harness(), initial = context(1, '/micro/work-orders/tickets/00000000-0000-7000-8000-000000000001'); t.after(() => app.unmount())
   initial.permissions.push('notification:publish')
-  initial.dataGrants.push({ resource: 'notification', action: 'publish', scope: 'ORG', subjectUserId: '30000000-0000-4000-8000-000000000001', tenantId: '10000000-0000-4000-8000-000000000001', organizationIds: ['20000000-0000-4000-8000-000000000001'] })
+  initial.dataGrants.push({ resource: 'notification', action: 'publish', scope: 'ORG', subjectUserId: '30000000-0000-7000-8000-000000000001', tenantId: '10000000-0000-7000-8000-000000000001', organizationIds: ['20000000-0000-7000-8000-000000000001'] })
   await app.mount(initial)
-  app.enqueue('POST', '/tickets/00000000-0000-4000-8000-000000000001/remind', reply(503, { code: 'REMINDER_RESULT_UNKNOWN' })); await app.click('remind-ticket')
-  app.enqueue('POST', '/tickets/00000000-0000-4000-8000-000000000001/remind', deny(403)); await app.click('remind-ticket')
+  app.enqueue('POST', '/tickets/00000000-0000-7000-8000-000000000001/remind', reply(503, { code: 'REMINDER_RESULT_UNKNOWN' })); await app.click('remind-ticket')
+  app.enqueue('POST', '/tickets/00000000-0000-7000-8000-000000000001/remind', deny(403)); await app.click('remind-ticket')
   assert.equal(app.nodes('remind-ticket').length, 0, 'the current denial removes the action')
   assert.equal(app.state.reminders.size, 1, 'denial of this replay cannot settle the prior unknown result')
   await app.update({ ...initial, contextEpoch: 2, contextVersion: 'renewed', token: 'renewed-token', signal: new AbortController().signal })
   assert.equal(app.requests.filter(request => request.method === 'POST').length, 2)
-  app.enqueue('POST', '/tickets/00000000-0000-4000-8000-000000000001/remind', reply(200, { publicationId: '0805aef9-5c92-40b2-8db9-739577f20b1e', recipientCount: 1, deliveryCount: 1, duplicate: true, createdAt: '2026-10-17T00:00:00Z' }))
+  app.enqueue('POST', '/tickets/00000000-0000-7000-8000-000000000001/remind', reply(200, { publicationId: '0805aef9-5c92-70b2-8db9-739577f20b1e', recipientCount: 1, deliveryCount: 1, duplicate: true, createdAt: '2026-10-17T00:00:00Z' }))
   await app.click('remind-ticket')
   const writes = app.requests.filter(request => request.method === 'POST')
   assert.equal(writes.length, 3)
@@ -480,10 +480,10 @@ test('actual app unit: a forbidden reminder recovery survives renewal and still 
 
 test('actual app unit: unknown quick status changes wait for explicit readback before another mutation', async t => {
   const app = harness(); t.after(() => app.unmount()); await app.mount(); await app.click('open-ticket')
-  app.enqueue('PATCH', '/tickets/00000000-0000-4000-8000-000000000001', reply(503, { code: 'WRITE_RESULT_UNKNOWN' })); await app.click('change-ticket-status')
+  app.enqueue('PATCH', '/tickets/00000000-0000-7000-8000-000000000001', reply(503, { code: 'WRITE_RESULT_UNKNOWN' })); await app.click('change-ticket-status')
   assert.equal(app.node('change-ticket-status').props.disabled, true)
   assert.equal(app.requests.filter(request => request.method === 'PATCH').length, 1)
-  app.enqueue('GET', '/tickets/00000000-0000-4000-8000-000000000001', reply(200, ticket('00000000-0000-4000-8000-000000000001', { version: 2, status: 'IN_PROGRESS' })))
+  app.enqueue('GET', '/tickets/00000000-0000-7000-8000-000000000001', reply(200, ticket('00000000-0000-7000-8000-000000000001', { version: 2, status: 'IN_PROGRESS' })))
   await app.click('verify-status-result')
   assert.equal(app.state.detail.status, 'IN_PROGRESS'); assert.equal(app.state.detail.version, 2)
   assert.equal(app.node('change-ticket-status').props.disabled, false)
@@ -492,16 +492,16 @@ test('actual app unit: unknown quick status changes wait for explicit readback b
 })
 
 test('actual app unit: checking one unknown deletion cannot settle another ticket across navigation and renewal', async t => {
-  const app = harness([ticket(), ticket('00000000-0000-4000-8000-000000000002')]), initial = context(1, '/micro/work-orders/tickets/00000000-0000-4000-8000-000000000001')
+  const app = harness([ticket(), ticket('00000000-0000-7000-8000-000000000002')]), initial = context(1, '/micro/work-orders/tickets/00000000-0000-7000-8000-000000000001')
   t.after(() => app.unmount()); await app.mount(initial); await app.click('delete-ticket')
-  app.enqueue('DELETE', '/tickets/00000000-0000-4000-8000-000000000001', reply(503, { code: 'WRITE_RESULT_UNKNOWN' })); await app.click('confirm-delete')
-  await app.update(context(2, '/micro/work-orders/tickets/00000000-0000-4000-8000-000000000002'))
+  app.enqueue('DELETE', '/tickets/00000000-0000-7000-8000-000000000001', reply(503, { code: 'WRITE_RESULT_UNKNOWN' })); await app.click('confirm-delete')
+  await app.update(context(2, '/micro/work-orders/tickets/00000000-0000-7000-8000-000000000002'))
   await app.click('delete-ticket')
   assert.equal(app.node('confirm-delete').props.disabled, false, 'ticket A uncertainty cannot block ticket B')
-  app.enqueue('DELETE', '/tickets/00000000-0000-4000-8000-000000000002', reply(503, { code: 'WRITE_RESULT_UNKNOWN' })); await app.click('confirm-delete')
-  app.enqueue('GET', '/tickets/00000000-0000-4000-8000-000000000002', reply(200, ticket('00000000-0000-4000-8000-000000000002', { version: 2 }))); await app.click('verify-delete-result')
+  app.enqueue('DELETE', '/tickets/00000000-0000-7000-8000-000000000002', reply(503, { code: 'WRITE_RESULT_UNKNOWN' })); await app.click('confirm-delete')
+  app.enqueue('GET', '/tickets/00000000-0000-7000-8000-000000000002', reply(200, ticket('00000000-0000-7000-8000-000000000002', { version: 2 }))); await app.click('verify-delete-result')
   assert.equal(app.node('confirm-delete').props.disabled, false)
-  await app.update(context(3, '/micro/work-orders/tickets/00000000-0000-4000-8000-000000000001')); await app.click('delete-ticket')
+  await app.update(context(3, '/micro/work-orders/tickets/00000000-0000-7000-8000-000000000001')); await app.click('delete-ticket')
   assert.equal(app.node('confirm-delete').props.disabled, true, 'checking B cannot clear the original unknown delete of A')
   assert.equal(app.nodes('verify-delete-result').length, 1)
   assert.equal(app.requests.filter(request => request.method === 'DELETE').length, 2)
@@ -522,14 +522,14 @@ test('actual app unit: malformed creation success cannot settle a potentially co
 })
 
 test('actual app unit: malformed reminder success retains its event and requires an explicit same key recovery', async t => {
-  const app = harness(), initial = context(1, '/micro/work-orders/tickets/00000000-0000-4000-8000-000000000001'); t.after(() => app.unmount())
+  const app = harness(), initial = context(1, '/micro/work-orders/tickets/00000000-0000-7000-8000-000000000001'); t.after(() => app.unmount())
   initial.permissions.push('notification:publish')
-  initial.dataGrants.push({ resource: 'notification', action: 'publish', scope: 'ORG', subjectUserId: '30000000-0000-4000-8000-000000000001', tenantId: '10000000-0000-4000-8000-000000000001', organizationIds: ['20000000-0000-4000-8000-000000000001'] })
+  initial.dataGrants.push({ resource: 'notification', action: 'publish', scope: 'ORG', subjectUserId: '30000000-0000-7000-8000-000000000001', tenantId: '10000000-0000-7000-8000-000000000001', organizationIds: ['20000000-0000-7000-8000-000000000001'] })
   await app.mount(initial)
-  app.enqueue('POST', '/tickets/00000000-0000-4000-8000-000000000001/remind', reply(200, {})); await app.click('remind-ticket')
+  app.enqueue('POST', '/tickets/00000000-0000-7000-8000-000000000001/remind', reply(200, {})); await app.click('remind-ticket')
   assert.equal(app.state.reminders.size, 1)
   assert.match(app.text(), /提醒结果尚未确认/)
-  app.enqueue('POST', '/tickets/00000000-0000-4000-8000-000000000001/remind', reply(200, { publicationId: '0805aef9-5c92-40b2-8db9-739577f20b1e', recipientCount: 1, deliveryCount: 1, duplicate: true, createdAt: '2026-10-17T00:00:00Z' }))
+  app.enqueue('POST', '/tickets/00000000-0000-7000-8000-000000000001/remind', reply(200, { publicationId: '0805aef9-5c92-70b2-8db9-739577f20b1e', recipientCount: 1, deliveryCount: 1, duplicate: true, createdAt: '2026-10-17T00:00:00Z' }))
   await app.click('remind-ticket')
   const writes = app.requests.filter(request => request.method === 'POST')
   assert.deepEqual(writes[0].body, writes[1].body)

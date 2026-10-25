@@ -1,6 +1,7 @@
 import { ApiError, reject } from './errors.mjs'
+import { validId } from './uuid.mjs'
 
-export const validId = (value) => typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)
+export { validId }
 const id = (value) => validId(value) ? value.toLowerCase() : null
 
 export function bearer(headers) {

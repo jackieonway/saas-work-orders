@@ -1,5 +1,6 @@
 [package]
 name = "work-orders-api"
+default-run = "work-orders-api"
 version = "0.1.0"
 edition = "2021"
 description = "Independent Rust work-order API and safe business database baseline takeover"
@@ -9,10 +10,10 @@ publish = false
 operational-telemetry = { path = "./vendor/operational-telemetry" }
 axum = { version = "0.8", default-features = false, features = ["http1", "json", "tokio"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "signal", "sync", "time"] }
-sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "tls-rustls-ring", "postgres", "uuid", "migrate"] }
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "tls-rustls-ring", "postgres", "uuid", "migrate", "json"] }
 serde = { version = "1", features = ["derive"] }
 sha2 = { version = "0.10", default-features = false }
-uuid = { version = "1", features = ["v4"] }
+uuid = { version = "1", features = ["v7"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "json", "std"] }
 url = { version = "2", default-features = false }

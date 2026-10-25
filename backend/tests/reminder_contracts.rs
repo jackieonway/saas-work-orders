@@ -65,7 +65,7 @@ where
         .connect(&raw)
         .await
         .expect("owned admin");
-    let name = format!("work_orders_phase20_{}", Uuid::new_v4().simple());
+    let name = format!("work_orders_phase20_{}", Uuid::now_v7().simple());
     sqlx::query(&format!("CREATE DATABASE \"{name}\""))
         .execute(&admin)
         .await
@@ -94,9 +94,9 @@ where
         pool,
         database_url: url.to_string(),
         identity: Identity {
-            tenant: Uuid::new_v4(),
-            org: Uuid::new_v4(),
-            user: Uuid::new_v4(),
+            tenant: Uuid::now_v7(),
+            org: Uuid::now_v7(),
+            user: Uuid::now_v7(),
         },
         pools: pools.clone(),
     };
@@ -239,7 +239,7 @@ impl Scenario {
             "expiresAt":expiry.to_rfc3339_opts(SecondsFormat::Millis,true),
             "user":{"id":self.identity.user.to_string(),"username":"reminder-user","displayName":"提醒用户"},
             "tenant":{"id":self.identity.tenant.to_string()},"organization":{"id":self.identity.org.to_string(),"name":"提醒组织"},
-            "application":{"id":"33333333-3333-4333-8333-333333333333"},"organizationScopeIds":self.ceiling,
+            "application":{"id":"33333333-3333-7333-8333-333333333333"},"organizationScopeIds":self.ceiling,
             "permissions":self.permissions,"dataGrants":grants});
         for (key, patch) in self.context_patch.as_object().unwrap() {
             value[key] = patch.clone();
@@ -369,7 +369,7 @@ async fn publish(State(shared): State<Shared>, request: Request) -> Response {
             result["duplicate"] = json!(true);
             result
         } else {
-            let result = json!({"publicationId":Uuid::new_v4().to_string(),"recipientCount":1,"deliveryCount":1,
+            let result = json!({"publicationId":Uuid::now_v7().to_string(),"recipientCount":1,"deliveryCount":1,
                 "duplicate":false,"createdAt":Utc::now().to_rfc3339_opts(SecondsFormat::Millis,true)});
             state
                 .publications
@@ -714,7 +714,7 @@ impl Harness {
 }
 
 async fn ticket(f: &Fixture, identity: Identity, assignee: Option<Uuid>) -> Uuid {
-    let id = Uuid::new_v4();
+    let id = Uuid::now_v7();
     let number = format!("WO-PH20-{}", id.simple());
     sqlx::query("INSERT INTO public.work_orders(id,number,tenant_id,organization_id,organization_name,owner_user_id,owner_display_name,assignee_user_id,assignee_display_name,title) VALUES($1,$2,$3,$4,'提醒组织',$5,'历史owner',$6,$7,'Editable title')")
         .bind(id).bind(number).bind(identity.tenant).bind(identity.org).bind(identity.user).bind(assignee).bind(assignee.map(|_|"历史处理人")).execute(&f.pool).await.unwrap();
@@ -795,7 +795,7 @@ async fn stable_event_payload_single_publication_and_unchanged_ticket() {
 #[ignore = "requires owned CI PostgreSQL"]
 async fn recipient_selection_and_title_edits_preserve_event_body() {
     owned(|f|async move{
-        let h=Harness::new(&f).await;let recipient=Uuid::new_v4();let id=ticket(&f,f.identity,Some(recipient)).await;
+        let h=Harness::new(&f).await;let recipient=Uuid::now_v7();let id=ticket(&f,f.identity,Some(recipient)).await;
         let first=h.remind("actor",id,"assigned-event").await;assert_eq!(first.status,200);
         assert_eq!(h.calls()[0].payload,expected_payload(id,f.identity,recipient,"assigned-event"));
         sqlx::query("UPDATE public.work_orders SET title='Changed display title',description='Changed',version=version+1,updated_at=statement_timestamp() WHERE id=$1").bind(id).execute(&f.pool).await.unwrap();
@@ -853,9 +853,9 @@ async fn ticket_and_notification_authorizations_are_independent() {
 async fn notification_scope_and_ticket_visibility_enforce_organization_ceiling() {
     owned(|f| async move {
         let h = Harness::new(&f).await;
-        let child = Uuid::new_v4();
-        let sibling = Uuid::new_v4();
-        let other = Uuid::new_v4();
+        let child = Uuid::now_v7();
+        let sibling = Uuid::now_v7();
+        let other = Uuid::now_v7();
         let own = ticket(&f, f.identity, None).await;
         let assigned = ticket(&f, f.identity, Some(other)).await;
         let child_id = ticket(
@@ -879,7 +879,7 @@ async fn notification_scope_and_ticket_visibility_enforce_organization_ceiling()
         let foreign = ticket(
             &f,
             Identity {
-                tenant: Uuid::new_v4(),
+                tenant: Uuid::now_v7(),
                 ..f.identity
             },
             None,
@@ -946,7 +946,7 @@ async fn notification_scope_and_ticket_visibility_enforce_organization_ceiling()
         h.remind("scoped", hidden, "assignee-not-owner")
             .await
             .error(404, "RESOURCE_NOT_FOUND");
-        for id in [foreign, deleted, Uuid::new_v4()] {
+        for id in [foreign, deleted, Uuid::now_v7()] {
             h.remind("actor", id, "invisible")
                 .await
                 .error(404, "RESOURCE_NOT_FOUND");
@@ -1113,7 +1113,7 @@ async fn durable_intent_survives_restart_and_recipient_or_ticket_changes_conflic
         h.remind("actor",id,"restart-recovery").await.error(503,"REMINDER_RESULT_UNKNOWN");assert_eq!(h.publication_count(),0);let original=h.calls()[0].payload.clone();
         h.restart(&f).await;h.put("actor",Scenario::allowed(f.identity));let restored=h.remind("actor",id,"restart-recovery").await;assert_eq!(restored.status,200);assert_eq!(restored.json()["duplicate"],false);assert_eq!(h.calls()[1].payload,original);
         h.put("actor",scenario);h.remind("actor",id,"uncommitted-event").await.error(503,"REMINDER_RESULT_UNKNOWN");assert_eq!(h.publication_count(),1);
-        h.restart(&f).await;let recipient=Uuid::new_v4();assign(&f,id,recipient).await;h.put("actor",Scenario::allowed(f.identity));let calls=h.calls().len();
+        h.restart(&f).await;let recipient=Uuid::now_v7();assign(&f,id,recipient).await;h.put("actor",Scenario::allowed(f.identity));let calls=h.calls().len();
         h.remind("actor",id,"uncommitted-event").await.error(409,"IDEMPOTENCY_CONFLICT");assert_eq!(h.calls().len(),calls,"changed target rejected before platform even when no platform commit existed");
         h.remind("actor",id,"restart-recovery").await.error(409,"IDEMPOTENCY_CONFLICT");assert_eq!(h.calls().len(),calls);
         let fresh=h.remind("actor",id,"explicit-new-event").await;assert_eq!(fresh.status,200);assert_eq!(h.calls().last().unwrap().payload,expected_payload(id,f.identity,recipient,"explicit-new-event"));
@@ -1127,14 +1127,14 @@ async fn durable_intent_survives_restart_and_recipient_or_ticket_changes_conflic
 async fn successful_publication_response_is_bounded_validated_and_projected() {
     owned(|f|async move{
         let h=Harness::new(&f).await;let id=ticket(&f,f.identity,None).await;
-        let patches=vec![json!({"publicationId":"invalid"}),json!({"publicationId":Uuid::new_v4().simple().to_string()}),json!({"recipientCount":0}),json!({"recipientCount":2}),json!({"recipientCount":1.5}),json!({"recipientCount":"1"}),json!({"recipientCount":1.0}),json!({"deliveryCount":0}),json!({"deliveryCount":2}),json!({"deliveryCount":"1"}),json!({"deliveryCount":1.0}),json!({"duplicate":1}),json!({"duplicate":null}),json!({"createdAt":"yesterday"}),json!({"createdAt":"2026-10-17"}),json!({"createdAt":0})];
+        let patches=vec![json!({"publicationId":"invalid"}),json!({"publicationId":Uuid::now_v7().simple().to_string()}),json!({"recipientCount":0}),json!({"recipientCount":2}),json!({"recipientCount":1.5}),json!({"recipientCount":"1"}),json!({"recipientCount":1.0}),json!({"deliveryCount":0}),json!({"deliveryCount":2}),json!({"deliveryCount":"1"}),json!({"deliveryCount":1.0}),json!({"duplicate":1}),json!({"duplicate":null}),json!({"createdAt":"yesterday"}),json!({"createdAt":"2026-10-17"}),json!({"createdAt":0})];
         let mut modes:Vec<_>=patches.into_iter().map(PublishMode::Patch).collect();
         for missing in ["publicationId", "recipientCount", "deliveryCount", "duplicate", "createdAt"] {
-            let mut body = json!({"publicationId":Uuid::new_v4().to_string(),"recipientCount":1,"deliveryCount":1,"duplicate":false,"createdAt":"2026-10-17T00:00:00Z"});
+            let mut body = json!({"publicationId":Uuid::now_v7().to_string(),"recipientCount":1,"deliveryCount":1,"duplicate":false,"createdAt":"2026-10-17T00:00:00Z"});
             body.as_object_mut().unwrap().remove(missing);
             modes.push(PublishMode::Raw(body.to_string()));
         }
-        modes.extend([PublishMode::Raw("{bad json".into()),PublishMode::Raw("[]".into()),PublishMode::Raw("null".into()),PublishMode::Raw(r#"{"publicationId":"33333333-3333-4333-8333-333333333333","recipientCount":1,"deliveryCount":1,"duplicate":false,"duplicate":true,"createdAt":"2026-10-17T00:00:00Z"}"#.into()),PublishMode::Html,PublishMode::Oversize,PublishMode::Redirect]);
+        modes.extend([PublishMode::Raw("{bad json".into()),PublishMode::Raw("[]".into()),PublishMode::Raw("null".into()),PublishMode::Raw(r#"{"publicationId":"33333333-3333-7333-8333-333333333333","recipientCount":1,"deliveryCount":1,"duplicate":false,"duplicate":true,"createdAt":"2026-10-17T00:00:00Z"}"#.into()),PublishMode::Html,PublishMode::Oversize,PublishMode::Redirect]);
         for (index,mode) in modes.into_iter().enumerate(){let mut scenario=Scenario::allowed(f.identity);scenario.mode=mode;h.put("response",scenario);let before=h.calls().len();h.remind("response",id,&format!("invalid-response-{index}")).await.error(503,"REMINDER_RESULT_UNKNOWN");assert_eq!(h.calls().len(),before+1);}
         assert_eq!(h.state.lock().unwrap().redirect_hits,0);
         let mut scenario=Scenario::allowed(f.identity);scenario.mode=PublishMode::Patch(json!({"online":false,"socketReady":false,"padding":"untrusted"}));h.put("response",scenario);
@@ -1183,7 +1183,7 @@ async fn authorization_revocation_and_context_expiry_cannot_replay_cached_succes
         assert_eq!(h.calls().len(), calls);
         let mut scenario = Scenario::allowed(f.identity);
         scenario.context_patch =
-            json!({"user":{"id":Uuid::new_v4().to_string(),"username":"wrong"}});
+            json!({"user":{"id":Uuid::now_v7().to_string(),"username":"wrong"}});
         h.put("actor", scenario);
         h.remind("actor", id, "original-success")
             .await

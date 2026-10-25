@@ -2,7 +2,7 @@
 
 工单业务由 Vue 3 前端、Rust API 和独立 PostgreSQL 数据库组成。前端运行在平台的 qiankun 宿主中，平台提供应用令牌、用户与组织上下文、导航和 CSV 下载服务；API 按请求向平台核验身份与授权，再访问自己的业务库。
 
-当前前端发布链路采用 qiankun HTML 入口、classic UMD 生命周期与固定 SDK 2.0.0。Rust、Node 兼容配置和 Compose 均要求显式填写准确的平台页面来源，拒绝 `null`、通配符和缺失配置；业务请求仍逐次校验应用令牌与授权。构建会验证实际 UMD、SDK、资源与摘要，并可生成只新增、不覆盖旧版本的静态候选包，步骤见[部署指南](backend/docs/deployment.md)。
+当前前端发布链路采用 qiankun HTML 入口、classic UMD 生命周期与固定 SDK 3.0.0。Rust、Node 兼容配置和 Compose 均要求显式填写准确的平台页面来源，拒绝 `null`、通配符和缺失配置；业务请求仍逐次校验应用令牌与授权。构建会验证实际 UMD、SDK、资源与摘要，并可生成只新增、不覆盖旧版本的静态候选包，步骤见[部署指南](backend/docs/deployment.md)。
 
 当前本地验收候选是 `frontend/deploy/micro-apps/work-orders/versions/2.0.1-qiankun/`，使用 `http://127.0.0.1:3000` 宿主和 `/work-orders-api`。它是尚未部署的本机候选；旧 `2.0.0-qiankun` 保留原字节。复核当前候选使用 `release:check`，生成后续候选必须选择未使用的新版本，不能覆盖已有目录。
 

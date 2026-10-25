@@ -3,6 +3,14 @@ use std::{error::Error, fmt};
 /// A sanitized configuration failure. No variant contains a supplied value.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ConfigError {
+    /// The selected database initialization mode is unsupported.
+    DatabaseInitMode,
+    /// Offline import preparation requires the migration-only executable.
+    ImportRequiresMigrationCommand,
+    /// Imported startup requires a complete, canonical trusted receipt.
+    ImportReceipt,
+    /// The configured database URL does not identify the receipt's target.
+    ImportTarget,
     /// Invalid private metrics credential.
     MetricsToken,
     /// The selected authorization protocol is unsupported.
@@ -30,6 +38,10 @@ pub enum ConfigError {
 impl fmt::Display for ConfigError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::DatabaseInitMode => f.write_str("WORK_ORDERS_DATABASE_INIT_MODE must be seed, import or imported"),
+            Self::ImportRequiresMigrationCommand => f.write_str("IMPORT_REQUIRES_MIGRATE_ONLY: use work-orders-migrate --import"),
+            Self::ImportReceipt => f.write_str("IMPORTED_DATABASE_RECEIPT_INVALID: expected database, import marker and schema SHA256 are required only in imported mode"),
+            Self::ImportTarget => f.write_str("IMPORTED_DATABASE_TARGET_MISMATCH: database URL must match WORK_ORDERS_EXPECTED_DATABASE"),
             Self::MetricsToken => f.write_str("metrics token must be a bounded non-whitespace credential"),
             Self::AuthorizationMode => f.write_str("PLATFORM_AUTHORIZATION_MODE must be combined or legacy"),
             Self::DatabaseUrl => f.write_str("WORK_ORDERS_DATABASE_URL must explicitly identify the independent PostgreSQL database"),

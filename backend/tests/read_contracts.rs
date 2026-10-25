@@ -58,7 +58,7 @@ where
         .connect(&raw)
         .await
         .expect("owned admin connection");
-    let name = format!("work_orders_phase17_{}", Uuid::new_v4().simple());
+    let name = format!("work_orders_phase17_{}", Uuid::now_v7().simple());
     sqlx::query(&format!("CREATE DATABASE \"{name}\""))
         .execute(&admin)
         .await
@@ -90,15 +90,15 @@ where
     let fixture = Fixture {
         pool: pool.clone(),
         database_url: url.to_string(),
-        tenant: Uuid::new_v4(),
-        other_tenant: Uuid::new_v4(),
-        user: Uuid::new_v4(),
-        other_user: Uuid::new_v4(),
-        org: Uuid::new_v4(),
-        child: Uuid::new_v4(),
-        parent: Uuid::new_v4(),
-        peer: Uuid::new_v4(),
-        tickets: (0..8).map(|_| Uuid::new_v4()).collect(),
+        tenant: Uuid::now_v7(),
+        other_tenant: Uuid::now_v7(),
+        user: Uuid::now_v7(),
+        other_user: Uuid::now_v7(),
+        org: Uuid::now_v7(),
+        child: Uuid::now_v7(),
+        parent: Uuid::now_v7(),
+        peer: Uuid::now_v7(),
+        tickets: (0..8).map(|_| Uuid::now_v7()).collect(),
     };
     let result = tokio::spawn(async move {
         initialize_database(&fixture.pool)
@@ -405,7 +405,7 @@ impl Harness {
             context: json!({"contractVersion":"1.0","appCode":"work-orders","contextVersion":"a".repeat(64),"expiresAt":expires,
                 "user":{"id":f.user.to_string(),"username":"fixture","displayName":"测试用户"},
                 "tenant":{"id":f.tenant.to_string()},"organization":{"id":f.org.to_string(),"name":"测试组织"},
-                "application":{"id":Uuid::new_v4().to_string()},"organizationScopeIds":ceiling,
+                "application":{"id":Uuid::now_v7().to_string()},"organizationScopeIds":ceiling,
                 "permissions":["ticket:read","ticket:export"],"dataGrants":[grant("read"),grant("export")]}),
             intro_status: StatusCode::OK,
             context_status: StatusCode::OK,
@@ -620,7 +620,7 @@ async fn tenant_and_hierarchy_invisibility() {
                 .await
                 .error(404, "RESOURCE_NOT_FOUND");
         }
-        h.request(Some("org"), &format!("/tickets/{}", Uuid::new_v4()))
+        h.request(Some("org"), &format!("/tickets/{}", Uuid::now_v7()))
             .await
             .error(404, "RESOURCE_NOT_FOUND");
         let visible = h
@@ -749,7 +749,7 @@ async fn invalid_token_and_context_contracts() {
         }
         for path in ["user", "tenant", "organization"] {
             let mut s = base.clone();
-            s.context[path]["id"] = json!(Uuid::new_v4().to_string());
+            s.context[path]["id"] = json!(Uuid::now_v7().to_string());
             cases.push((s, "INVALID_CONTEXT"));
         }
         for (i, (scenario, code)) in cases.into_iter().enumerate() {
@@ -913,6 +913,22 @@ async fn filters_literal_count_and_export_agree() {
             reply.error(400, "VALIDATION_ERROR");
         }
         let encoded = query_params(&[("q", &"😀".repeat(201))]);
+        // Intentional v4/nil/variant negatives: invalid typed filters cannot be dropped.
+        for raw in [
+            "01900000-0000-4000-8000-000000000001",
+            "00000000-0000-0000-0000-000000000000",
+            "01900000-0000-7000-c000-000000000001",
+        ] {
+            for route in [
+                format!("/tickets?organizationId={raw}"),
+                format!("/tickets/export.csv?organizationId={raw}"),
+                format!("/tickets/{raw}"),
+            ] {
+                h.request(Some("filters"), &route)
+                    .await
+                    .error(400, "VALIDATION_ERROR");
+            }
+        }
         h.request(Some("filters"), &format!("/tickets?{encoded}"))
             .await
             .error(400, "VALIDATION_ERROR");
@@ -1015,8 +1031,9 @@ async fn csv_encoding_formula_and_scope() {
 }
 
 async fn bulk(f: &Fixture, count: i32, description: &str) {
-    sqlx::query("INSERT INTO work_orders(id,number,tenant_id,organization_id,organization_name,owner_user_id,owner_display_name,title,description) SELECT md5('phase17-bulk-'||g::text)::uuid,'BULK-'||g::text,$1,$2,'组织',$3,'创建人','bulk title',$4 FROM generate_series(1,$5) g")
-        .bind(f.tenant).bind(f.org).bind(f.user).bind(description).bind(count).execute(&f.pool).await.expect("owned bulk seed");
+    let ids: Vec<_> = (0..count).map(|_| Uuid::now_v7()).collect();
+    sqlx::query("INSERT INTO work_orders(id,number,tenant_id,organization_id,organization_name,owner_user_id,owner_display_name,title,description) SELECT generated.id,'BULK-'||g::text,$1,$2,'组织',$3,'创建人','bulk title',$4 FROM unnest($5::uuid[]) WITH ORDINALITY AS generated(id,g)")
+        .bind(f.tenant).bind(f.org).bind(f.user).bind(description).bind(&ids).execute(&f.pool).await.expect("owned bulk seed");
 }
 
 #[tokio::test]
@@ -1027,7 +1044,7 @@ async fn csv_row_capacity() {
         let h=Harness::new(&f).await;h.scenario(&f,"capacity","TENANT",vec![],Value::Null).await;
         assert_eq!(csv(&h.request(Some("capacity"),"/tickets/export.csv").await).len(),1001);
         sqlx::query("INSERT INTO work_orders(id,number,tenant_id,organization_id,organization_name,owner_user_id,owner_display_name,title) VALUES($1,'OVERFLOW',$2,$3,'组织',$4,'创建人','overflow')")
-            .bind(Uuid::new_v4()).bind(f.tenant).bind(f.org).bind(f.user).execute(&f.pool).await.unwrap();
+            .bind(Uuid::now_v7()).bind(f.tenant).bind(f.org).bind(f.user).execute(&f.pool).await.unwrap();
         h.request(Some("capacity"),"/tickets/export.csv").await.error(400,"EXPORT_LIMIT");
         let bounded=h.request(Some("capacity"),"/tickets/export.csv?q=OVERFLOW").await;assert_eq!(csv(&bounded).len(),2);
         h.assert_wire();
@@ -1123,7 +1140,7 @@ async fn cors_preflight_and_error_responses() {
         h.request(Some("ok"), "/tickets?page=0")
             .await
             .error(400, "VALIDATION_ERROR");
-        let supplied = Uuid::new_v4().to_string();
+        let supplied = Uuid::now_v7().to_string();
         let response = h
             .client
             .get(format!("{}{PREFIX}/tickets", h.origin))
@@ -1147,9 +1164,10 @@ async fn cors_preflight_and_error_responses() {
 #[ignore = "requires owned CI PostgreSQL"]
 async fn representative_query_plan_baseline() {
     owned(|f| async move {
-        let orgs:Vec<_>=std::iter::once(f.org).chain((0..11).map(|_|Uuid::new_v4())).collect();
-        sqlx::query("INSERT INTO work_orders(id,number,tenant_id,organization_id,organization_name,owner_user_id,owner_display_name,title,description,created_at) SELECT md5('phase17-plan-'||g::text)::uuid,'PLAN-'||g::text,CASE WHEN g%5=0 THEN $2 ELSE $1 END,($5::uuid[])[(g%12)+1], '代表组织',CASE WHEN g%2=0 THEN $3 ELSE $4 END,'代表创建人',CASE WHEN g%101=0 THEN 'literal 100%_\\ match' ELSE 'ordinary representative ticket' END,'representative description',now()-g*interval '1 second' FROM generate_series(1,24000) g")
-            .bind(f.tenant).bind(f.other_tenant).bind(f.user).bind(f.other_user).bind(&orgs)
+        let orgs:Vec<_>=std::iter::once(f.org).chain((0..11).map(|_|Uuid::now_v7())).collect();
+        let ids: Vec<_> = (0..24_000).map(|_| Uuid::now_v7()).collect();
+        sqlx::query("INSERT INTO work_orders(id,number,tenant_id,organization_id,organization_name,owner_user_id,owner_display_name,title,description,created_at) SELECT generated.id,'PLAN-'||g::text,CASE WHEN g%5=0 THEN $2 ELSE $1 END,($5::uuid[])[(g%12)+1], '代表组织',CASE WHEN g%2=0 THEN $3 ELSE $4 END,'代表创建人',CASE WHEN g%101=0 THEN 'literal 100%_\\ match' ELSE 'ordinary representative ticket' END,'representative description',now()-g*interval '1 second' FROM unnest($6::uuid[]) WITH ORDINALITY AS generated(id,g)")
+            .bind(f.tenant).bind(f.other_tenant).bind(f.user).bind(f.other_user).bind(&orgs).bind(&ids)
             .execute(&f.pool).await.expect("representative dataset");
         f.pool.execute("ANALYZE work_orders").await.unwrap();
         let total:i64=sqlx::query_scalar("SELECT count(*) FROM work_orders").fetch_one(&f.pool).await.unwrap();assert_eq!(total,24008);

@@ -10,6 +10,8 @@
 
 JSON 字段采用 camelCase，正文为 UTF-8 JSON 对象，写入 `Content-Type` 为 `application/json`，上限 64 KiB。未知字段、重复字段和无效类型拒绝；调用者不能填写 `tenantId`、`ownerUserId`、组织/人员显示快照等权威字段。除列表、导出和成员查询外，详情与写入接口不接受查询参数。
 
+系统实体 UUID 统一为 version 7／RFC variant。Path、typed DTO、人员目录和筛选参数中的 v4、nil 或错误 variant 返回 400，非法筛选不会按“未提供”处理。工单编号、幂等键、客户端名称和安全随机 token 保持各自字符串合同。外部 `X-Request-Id` 仅接受单个有效 v7，其余情况生成新的 v7 作为系统请求 ID。
+
 请求可传 `X-Request-Id` UUID，服务回传规范小写 UUID；缺失、重复或格式错误会生成新值。错误正文为 `{ "code": "…", "message": "…" }`，不回显令牌、SQL、连接信息或平台敏感响应。响应使用 `Cache-Control: no-store`，业务请求最长 15 秒；写入超时可能代表结果未知。
 
 qiankun 运行在平台页面中，浏览器 API 请求来源为平台的精确 origin。`WORK_ORDERS_ALLOWED_ORIGINS` 必须显式允许该来源，API 不启用 credentials；预检允许 GET/POST/PATCH/DELETE 与 Authorization、Content-Type、X-Request-Id、Idempotency-Key。配置缺失/为空、`null` 或通配符会导致启动配置加载失败；实际请求使用未授权来源或 `null` 返回 403 `ORIGIN_DENIED`。准确来源不会代替应用 Bearer token 校验。
@@ -64,7 +66,9 @@ CSV 支持相同筛选，拒绝 `page`/`size`，最多 1000 条，超限返回 4
 
 `GET /assignees` 必须传 `action=create|update`；可选 `organizationId`、`page`、`size`、`q`。page 默认 1，最大 1000000；size 默认 20，最大 50；q 在 trim 前最多 100 字符。返回 `{ records, total, page, size }`，成员项为 `{ userId, displayName, organizationId }`，不提供平台完整用户表。
 
-创建非空处理人或真正变更分配时需实时校验成员。服务先完成业务范围内的非锁定读取并释放连接，再查平台有效成员，最后进入短事务锁定并复核 version、组织与原值。省略或保留同一处理人可沿用当前存储快照，不能用历史目录列表替代新成员校验。成员窗口从平台 HTTP 请求开始计 `min(PLATFORM_AUTH_TIMEOUT_MS, 3000ms)`，不因等待数据库锁而续期；提交前过期回滚并返回 `MEMBER_VALIDATION_EXPIRED`，提交后才无法确认有效性时按结果未知处理。平台库与工单库之间没有跨库原子事务。
+成员目录和单人校验同时要求调用者当前身份为有效 `EMPLOYEE`，目标也必须具有目标组织内有效的直接员工关系，由平台权威判断。仅有客户关系、员工已停用但客户有效的账号，以及客户成员 ID 都不能作为处理人；同账号同组织的客户关系不影响其有效员工身份被选择。业务 DTO 继续使用 `assigneeUserId`，不接受调用者提供的成员类型或成员身份 ID。
+
+创建非空处理人，或更新时显式提交非空 `assigneeUserId`，均需实时单人校验，即使 ID 与当前值相同。服务先完成业务范围内的非锁定读取并释放连接，再查平台有效员工，最后进入短事务锁定并复核 version、组织与原值。同一 ID 校验成功后保留原显示快照，仅 ID 真正变化时更新显示快照；省略处理人字段保留历史分配和快照，显式 null 清空分配。这两种操作不选择新目标，不请求成员目录。历史目录列表不能替代显式 ID 的单人校验。成员窗口从平台 HTTP 请求开始计 `min(PLATFORM_AUTH_TIMEOUT_MS, 3000ms)`，不因等待数据库锁而续期；提交前过期回滚并返回 `MEMBER_VALIDATION_EXPIRED`，提交后才无法确认有效性时按结果未知处理。平台库与工单库之间没有跨库原子事务。
 
 503 `WRITE_RESULT_UNKNOWN` 或网络/协议未知时，先读取当前详情核对版本与状态，再决定后续操作。读取 404 还可能代表可见性改变，不能单凭它证明删除已提交。
 

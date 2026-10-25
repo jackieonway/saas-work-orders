@@ -1,15 +1,15 @@
 import { validContext, validIdempotencyKey, MAX_BYTES, PRIORITIES, STATUSES } from './domain.mjs'
+import { newId, validUUID as uuid } from './uuid.mjs'
 import { SDK_VERSION, MicroSdkError, requestWithContext, authorizationContextSignature, assertSupportedSdkVersion } from '../vendor/micro-sdk/index.mjs'
 
 export class BusinessError extends Error {
   constructor(status, message, code = '', kind = 'HTTP', requestId) {
     super(message); this.name = 'BusinessError'; this.status = status; this.code = code; this.kind = kind
-    if (requestId) this.requestId = requestId
+    if (uuid(requestId)) this.requestId = requestId
   }
 }
 const cancelled = () => new DOMException('工单上下文已变更', 'AbortError')
 const unknownCodes = new Set(['CREATE_RESULT_UNKNOWN', 'WRITE_RESULT_UNKNOWN', 'REMINDER_PREPARATION_UNKNOWN', 'REMINDER_RESULT_UNKNOWN'])
-const uuid = value => typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)
 const object = value => value !== null && typeof value === 'object' && !Array.isArray(value)
 const string = (value, maximum) => typeof value === 'string' && !value.includes('\0') && Array.from(value).length <= maximum
 const timestamp = value => typeof value === 'string' && value.length <= 64 &&
@@ -152,10 +152,13 @@ export class WorkOrdersClient {
       let observedCode = '', observedStatus, observedRequestId
       const fetchRequest = this.fetchImpl
       const transport = async (url, options) => {
-        const response = await fetchRequest(url, options)
+        const headers = new Headers(options.headers)
+        if (!uuid(headers.get('X-Request-Id'))) headers.set('X-Request-Id', newId())
+        observedRequestId = headers.get('X-Request-Id')
+        const response = await fetchRequest(url, { ...options, headers })
         observedStatus = response?.status
         const echoed = response?.headers?.get('X-Request-Id')
-        observedRequestId = uuid(echoed) ? echoed : options.headers.get('X-Request-Id')
+        if (uuid(echoed)) observedRequestId = echoed
         if (uncertainOutcome) observedCode = await unknownCode(response, options.signal)
         return response
       }
@@ -181,7 +184,7 @@ export class WorkOrdersClient {
           : error.kind === 'PROTOCOL' ? '业务服务返回的数据无法识别'
           : error.status === 403 ? '当前操作未获授权，请等待平台更新上下文'
           : error.status === 409 ? '工单已更新，请刷新并核对后重试' : '操作未完成，请稍后重试'
-        const failure = new BusinessError(status, message, observedCode || error.code, error.kind, error.requestId)
+        const failure = new BusinessError(status, message, observedCode || error.code, error.kind, observedRequestId ?? error.requestId)
         if (uncertainOutcome && (error.kind === 'NETWORK' || error.kind === 'PROTOCOL' || error.status >= 500)) {
           failure.outcome = uncertainOutcome === 'REMINDER_RESULT_UNKNOWN' && observedCode === 'REMINDER_PREPARATION_UNKNOWN'
             ? observedCode : uncertainOutcome
@@ -199,18 +202,27 @@ export class WorkOrdersClient {
     if (filters.priority && filters.priority !== 'ALL') params.set('priority', filters.priority)
     return this.request('/tickets?' + params, { signal, decode: value => pageResponse(value, ticketResponse, 100) })
   }
-  detail(id, signal) { return this.request('/tickets/' + encodeURIComponent(id), { signal, decode: value => ticketFor(id, value) }) }
+  async detail(id, signal) {
+    if (!uuid(id)) throw new TypeError('工单标识必须为 UUIDv7')
+    return this.request('/tickets/' + encodeURIComponent(id), { signal, decode: value => ticketFor(id, value) })
+  }
   async create(body, idempotencyKey, signal) {
+    if (body?.assigneeUserId != null && !uuid(body.assigneeUserId)) throw new TypeError('处理人标识必须为 UUIDv7')
     if (!validIdempotencyKey(idempotencyKey)) throw new TypeError('创建工单需要有效的操作事件键')
     return this.request('/tickets', { method: 'POST', body, idempotencyKey, signal, uncertainOutcome: 'CREATE_RESULT_UNKNOWN',
       decode: value => { const ticket = ticketResponse(value); requireShape(ticket.version === 1 && ticket.status === 'OPEN'); return ticket }, expectedStatus: 201 })
   }
-  updateTicket(id, body) {
+  async updateTicket(id, body) {
+    if (!uuid(id) || body?.assigneeUserId != null && !uuid(body.assigneeUserId)) throw new TypeError('工单和处理人标识必须为 UUIDv7')
     return this.request('/tickets/' + encodeURIComponent(id), { method: 'PATCH', body, uncertainOutcome: 'WRITE_RESULT_UNKNOWN',
       decode: value => { const ticket = ticketFor(id, value); requireShape(ticket.version === body.version + 1); return ticket } })
   }
-  remove(id, version) { return this.request('/tickets/' + encodeURIComponent(id), { method: 'DELETE', body: { version }, uncertainOutcome: 'WRITE_RESULT_UNKNOWN', decode: deleteResponse }) }
-  assignees(action, organizationId, signal, { q = '', page = 1, size = 50 } = {}) {
+  async remove(id, version) {
+    if (!uuid(id)) throw new TypeError('工单标识必须为 UUIDv7')
+    return this.request('/tickets/' + encodeURIComponent(id), { method: 'DELETE', body: { version }, uncertainOutcome: 'WRITE_RESULT_UNKNOWN', decode: deleteResponse })
+  }
+  async assignees(action, organizationId, signal, { q = '', page = 1, size = 50 } = {}) {
+    if (!uuid(organizationId)) throw new TypeError('组织标识必须为 UUIDv7')
     const params = new URLSearchParams({ action, organizationId, q, page: String(page), size: String(size) })
     return this.request('/assignees?' + params, { signal, decode: value => pageResponse(value, memberResponse, 50) })
   }
@@ -221,6 +233,7 @@ export class WorkOrdersClient {
     return this.request('/tickets/export.csv' + (params.size ? '?' + params : ''), { text: true })
   }
   async remind(id, idempotencyKey, signal) {
+    if (!uuid(id)) throw new TypeError('工单标识必须为 UUIDv7')
     if (!validIdempotencyKey(idempotencyKey)) throw new TypeError('工单提醒需要有效的操作事件键')
     return this.request('/tickets/' + encodeURIComponent(id) + '/remind', { method: 'POST', body: { idempotencyKey }, signal, uncertainOutcome: 'REMINDER_RESULT_UNKNOWN', decode: reminderResponse })
   }

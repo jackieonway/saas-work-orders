@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { createHash, randomUUID } from 'node:crypto'
+import { createHash } from 'node:crypto'
+import { newId, validId } from '../uuid.mjs'
 import { readFile } from 'node:fs/promises'
 import {
   ACTIONS, API, accepted, call, createTicket, denied,
@@ -115,7 +116,7 @@ test('real PG + HTTP platform fixture: four scopes isolate list/detail/export an
 test('real PG + HTTP platform fixture: child context cannot query or mutate ancestor and sibling data even under SELF or TENANT', options, async (t) => {
   const h = await matrix(t, databaseUrl)
   const actor = h.actors.ownChild
-  const grandchild = randomUUID()
+  const grandchild = newId()
   const ownGrandchild = h.platform.add(identity(actor.actor.userId, h.tenantA, grandchild), 'a-grandchild-own')
   const ownPeer = h.platform.add(identity(actor.actor.userId, h.tenantA, h.peer), 'a-peer-own')
   const descendant = await createTicket(h.url, ownGrandchild, 'Owned grandchild visible from child')
@@ -266,7 +267,7 @@ test('real PG + HTTP platform fixture: writes obey scopes, optimistic concurrenc
   for (const [method, column] of [['PATCH', 'title'], ['DELETE', 'deleted_at']]) {
     await t.test(`context expiry during final ${method} SQL rolls back version/title/deleted_at before commit`, async () => {
       const row = await createTicket(h.url, actor, `Rollback after slow final ${method} SQL`)
-      assert.match(row.id, /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i)
+      assert.equal(validId(row.id), true)
       const fixtureName = `work_order_fixture_slow_${method.toLowerCase()}`
       let installed = false
       let pending
@@ -350,7 +351,7 @@ test('real PG + HTTP platform fixture: strict input, Unicode limits and valid di
   await t.test('creation rejects client ownership, status, identity, timestamp and version overrides', async () => {
     const before = (await records(h.url, actor)).length
     const forbidden = {
-      id: randomUUID(), number: 'FORGED-1', tenantId: h.tenantB, organizationId: h.child,
+      id: newId(), number: 'FORGED-1', tenantId: h.tenantB, organizationId: h.child,
       ownerUserId: h.actors.other.actor.userId, status: 'RESOLVED', version: 123,
       createdAt: '2020-01-01T00:00:00Z', updatedAt: '2020-01-01T00:00:00Z', deletedAt: null,
       tenant_id: h.tenantB, organization_id: h.child, owner_user_id: h.actors.other.actor.userId,
@@ -374,7 +375,7 @@ test('real PG + HTTP platform fixture: strict input, Unicode limits and valid di
   await t.test('PATCH and DELETE require positive integer versions and reject ownership movement', async () => {
     const row = await createTicket(h.url, actor, 'Immutable owner test')
     for (const field of ['tenantId', 'organizationId', 'ownerUserId', 'id', 'number', 'createdAt', 'updatedAt', 'deletedAt', 'arbitrary']) {
-      await denied(h.url, actor.token, 'PATCH', path(row), { version: row.version, [field]: randomUUID() }, [400])
+      await denied(h.url, actor.token, 'PATCH', path(row), { version: row.version, [field]: newId() }, [400])
     }
     for (const version of [undefined, null, 0, -1, 1.5, '1', true, Number.MAX_SAFE_INTEGER + 1]) {
       const body = version === undefined ? { title: 'Missing version' } : { version, title: 'Bad version' }
@@ -426,7 +427,7 @@ test('real PG + HTTP platform fixture: strict input, Unicode limits and valid di
     const row = await createTicket(h.url, actor, 'Valid assignee', { assigneeUserId: validAssignee })
     assert.equal(row.assigneeUserId, validAssignee)
     assert.equal(row.assigneeDisplayName, `Member ${validAssignee.slice(0, 8)}`)
-    for (const assigneeUserId of [randomUUID(), h.actors.child.actor.userId, h.actors.remote.actor.userId, 'not-a-uuid']) {
+    for (const assigneeUserId of [newId(), h.actors.child.actor.userId, h.actors.remote.actor.userId, 'not-a-uuid']) {
       await denied(h.url, actor.token, 'POST', API, { title: 'Invalid assignee', assigneeUserId }, [400, 403, 404])
       await denied(h.url, actor.token, 'PATCH', path(row), { version: row.version, assigneeUserId }, [400, 403, 404])
     }
@@ -476,7 +477,7 @@ test('real PG + HTTP platform fixture: strict input, Unicode limits and valid di
     const { migrate } = await import('../db.mjs')
     const history = () => h.query('SELECT version,checksum,applied_at::text AS applied_at FROM work_order_migrations ORDER BY version')
     const before = (await history()).rows
-    const expectedFiles = ['0001_work_orders.sql', '0002_create_idempotency.sql', '0003_reminder_intents.sql']
+    const expectedFiles = ['0001_work_orders.sql', '0002_create_idempotency.sql', '0003_reminder_intents.sql', '0004_uuid_v7.sql']
     assert.deepEqual(before.map(row => row.version), expectedFiles)
     for (const row of before) {
       const bytes = await readFile(new URL('../migrations/' + row.version, import.meta.url))
@@ -583,15 +584,15 @@ test('real PG + HTTP platform fixture: independent export authority and safe per
     replaceGrant(actor.state, 'export', 'TENANT')
     const insert = `INSERT INTO work_orders
       (id,number,tenant_id,organization_id,organization_name,owner_user_id,owner_display_name,title,description)
-      SELECT gen_random_uuid(),'capacity-fixture-'||g,$1,$2,'Fixture Organization',$3,'Fixture User',
-      'Capacity fixture '||g,$4 FROM generate_series(1,$5::integer) AS g`
-    await h.query(insert, [h.tenantA, h.root, actor.actor.userId, '', 1001])
+      SELECT fixture.id,'capacity-fixture-'||g,$1,$2,'Fixture Organization',$3,'Fixture User',
+      'Capacity fixture '||g,$4 FROM unnest($5::uuid[]) WITH ORDINALITY AS fixture(id,g)`
+    await h.query(insert, [h.tenantA, h.root, actor.actor.userId, '', Array.from({ length: 1001 }, newId)])
     const limitedRows = await denied(h.url, actor.token, 'GET', `${API}/export.csv`, undefined, [400])
     assert.equal(limitedRows.value.code, 'EXPORT_LIMIT')
     const retained = await h.query("SELECT count(*)::integer AS count FROM work_orders WHERE number LIKE 'capacity-fixture-%'")
     assert.equal(retained.rows[0].count, 1001)
     await h.query("DELETE FROM work_orders WHERE number LIKE 'capacity-fixture-%'")
-    await h.query(insert, [h.tenantA, h.root, actor.actor.userId, 'x'.repeat(8192), 600])
+    await h.query(insert, [h.tenantA, h.root, actor.actor.userId, 'x'.repeat(8192), Array.from({ length: 600 }, newId)])
     // This case transfers a real 4.9 MB PostgreSQL result over the remote test
     // connection before the API can reject the serialized CSV. Its client wait
     // must remain within the platform context TTL while allowing that transfer.
@@ -679,7 +680,7 @@ test('real PG + HTTP platform fixture: protocol binding and upstream transport f
   await t.test('operation role with no direct data grants is denied even with inherited role metadata', async () => {
     const original = actor.state.grants
     actor.state.grants = []
-    actor.state.contextPatch = { roles: [{ id: randomUUID(), name: 'Inherited role', code: 'ancestor-role' }] }
+    actor.state.contextPatch = { roles: [{ id: newId(), name: 'Inherited role', code: 'ancestor-role' }] }
     for (const action of ACTIONS) {
       const method = action === 'create' ? 'POST' : action === 'update' ? 'PATCH' : action === 'delete' ? 'DELETE' : 'GET'
       const path = action === 'export' ? `${API}/export.csv` : ['update', 'delete'].includes(action) ? `${API}/${h.tickets.ownRoot.id}` : API

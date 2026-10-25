@@ -74,15 +74,7 @@ fn valid_key(value: &str) -> bool {
 }
 
 pub(super) fn uuid(value: &str) -> Option<Uuid> {
-    if value.len() != 36 {
-        return None;
-    }
-    let parsed = Uuid::parse_str(value).ok()?;
-    parsed
-        .hyphenated()
-        .to_string()
-        .eq_ignore_ascii_case(value)
-        .then_some(parsed)
+    crate::uuid_v7::parse(value)
 }
 
 pub(super) fn payload(ticket: &Ticket, key: &str) -> Payload {
@@ -202,10 +194,10 @@ mod tests {
 
     fn ticket() -> Ticket {
         Ticket {
-            id: Uuid::from_u128(1),
+            id: crate::uuid_v7::fixture(1),
             number: "WO-000042".into(),
-            organization: Uuid::from_u128(2),
-            owner: Uuid::from_u128(3),
+            organization: crate::uuid_v7::fixture(2),
+            owner: crate::uuid_v7::fixture(3),
             assignee: None,
         }
     }
@@ -223,7 +215,7 @@ mod tests {
             value["link"],
             format!("/micro/work-orders/tickets/{}", ticket.id)
         );
-        ticket.assignee = Some(Uuid::from_u128(4));
+        ticket.assignee = Some(crate::uuid_v7::fixture(4));
         assert_ne!(payload(&ticket, "event"), original);
         let json = serde_json::to_string(&original).expect("payload bytes");
         assert!(
@@ -249,7 +241,7 @@ mod tests {
 
     #[test]
     fn publication_projection_rejects_duplicate_required_fields_and_noninteger_counts() {
-        let base = serde_json::json!({"publicationId": Uuid::from_u128(1).to_string(), "recipientCount":1, "deliveryCount":1, "duplicate":false, "createdAt":"2026-10-17T12:00:00.123Z", "extra":"discard"});
+        let base = serde_json::json!({"publicationId": crate::uuid_v7::fixture(1).to_string(), "recipientCount":1, "deliveryCount":1, "duplicate":false, "createdAt":"2026-10-17T12:00:00.123Z", "extra":"discard"});
         let parsed = Publication::from_bytes(base.to_string().as_bytes()).expect("publication");
         assert_eq!(
             serde_json::to_value(parsed)

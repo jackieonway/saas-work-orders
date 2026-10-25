@@ -251,7 +251,7 @@ pub(crate) async fn create(
     .await
     .map_err(database_error)?;
     assert_assignment()?;
-    let ticket_id = Uuid::new_v4();
+    let ticket_id = crate::uuid_v7::new();
     let insert_sql = format!(
         "INSERT INTO public.work_orders(id,number,tenant_id,organization_id,organization_name,\
          owner_user_id,owner_display_name,title,description,priority,assignee_user_id,assignee_display_name) \
@@ -397,20 +397,23 @@ pub(crate) async fn update(
         if target != preflight.assignee {
             auth.require_organization(preflight.organization)?;
             replacement = Some(target);
-            if let Some(user) = target {
-                verified = Some(
-                    authorizer
-                        .member(
-                            auth,
-                            token,
-                            preflight.organization,
-                            user,
-                            Action::Update,
-                            request_id,
-                        )
-                        .await?,
-                );
-            }
+        }
+        // An explicit ID is a fresh selection even when its value is unchanged.
+        // Only an omitted field retains the historical assignment without a
+        // directory lookup; revalidation must not replace its display snapshot.
+        if let Some(user) = target {
+            verified = Some(
+                authorizer
+                    .member(
+                        auth,
+                        token,
+                        preflight.organization,
+                        user,
+                        Action::Update,
+                        request_id,
+                    )
+                    .await?,
+            );
         }
     }
     let mut transaction = crate::telemetry::begin(pool)
@@ -431,7 +434,7 @@ pub(crate) async fn update(
     }
     let assert_assignment = || {
         auth.assert_fresh()?;
-        if let (Some(member), Some(Some(user))) = (&verified, replacement) {
+        if let (Some(member), Some(Some(user))) = (&verified, requested) {
             member.assert_for(auth, organization, user, Action::Update)?;
         }
         Ok::<(), ApiError>(())

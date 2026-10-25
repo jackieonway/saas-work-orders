@@ -48,7 +48,7 @@ test('default production release contains qiankun UMD with exact source/SDK meta
   const json = name => JSON.parse(readFileSync(path.join(result.output, name), 'utf8'))
   const info = json('build-info.json'), manifest = json('asset-manifest.json')
   assert.equal(info.application, 'work-orders')
-  assert.equal(info.sdkVersion, '2.0.0')
+  assert.equal(info.sdkVersion, '3.0.0')
   assert.equal(info.runtime, 'qiankun')
   assert.equal(info.vueVersion, '3.5.43')
   assert.equal(info.viteVersion, '8.3.4')

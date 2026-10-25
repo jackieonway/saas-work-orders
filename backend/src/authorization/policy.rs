@@ -168,16 +168,7 @@ pub(super) fn now_millis() -> i64 {
 }
 
 fn id(value: &Value) -> Option<Uuid> {
-    let raw = value.as_str()?;
-    if raw.len() != 36 {
-        return None;
-    }
-    let parsed = Uuid::parse_str(raw).ok()?;
-    if parsed.hyphenated().to_string().eq_ignore_ascii_case(raw) {
-        Some(parsed)
-    } else {
-        None
-    }
+    crate::uuid_v7::parse(value.as_str()?)
 }
 
 pub(super) fn validate_intro(intro: &Value, now: i64) -> Result<TokenIdentity, ApiError> {

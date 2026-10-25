@@ -65,7 +65,7 @@ where
         .connect(&raw)
         .await
         .expect("owned admin");
-    let name = format!("work_orders_phase19_{}", Uuid::new_v4().simple());
+    let name = format!("work_orders_phase19_{}", Uuid::now_v7().simple());
     sqlx::query(&format!("CREATE DATABASE \"{name}\""))
         .execute(&admin)
         .await
@@ -95,9 +95,9 @@ where
         pool,
         database_url: url.to_string(),
         identity: Identity {
-            tenant: Uuid::new_v4(),
-            org: Uuid::new_v4(),
-            user: Uuid::new_v4(),
+            tenant: Uuid::now_v7(),
+            org: Uuid::now_v7(),
+            user: Uuid::now_v7(),
         },
         pools: pools.clone(),
     };
@@ -154,6 +154,7 @@ impl Gate {
 #[derive(Clone)]
 struct Scenario {
     identity: Identity,
+    member_type: &'static str,
     permissions: Vec<String>,
     grants: Vec<String>,
     scope: &'static str,
@@ -171,6 +172,7 @@ impl Scenario {
         let actions = ["read", "export", "create", "update", "delete"];
         Self {
             identity,
+            member_type: "EMPLOYEE",
             permissions: actions.iter().map(|a| format!("ticket:{a}")).collect(),
             grants: actions.iter().map(|a| (*a).to_owned()).collect(),
             scope: "TENANT",
@@ -199,7 +201,7 @@ impl Scenario {
             "user":{"id":self.identity.user.to_string(),"username":"writer","displayName":self.display_name},
             "tenant":{"id":self.identity.tenant.to_string()},
             "organization":{"id":self.identity.org.to_string(),"name":self.organization_name},
-            "application":{"id":"33333333-3333-4333-8333-333333333333"},"organizationScopeIds":self.ceiling,
+            "application":{"id":"33333333-3333-7333-8333-333333333333"},"organizationScopeIds":self.ceiling,
             "permissions":self.permissions,"dataGrants":self.grants.iter().map(|action|json!({
                 "resource":"ticket","action":action,"tenantId":self.identity.tenant.to_string(),
                 "subjectUserId":self.identity.user.to_string(),"scope":self.scope,
@@ -235,6 +237,8 @@ enum MemberMode {
 struct MemberRecord {
     identity: Identity,
     display_name: String,
+    employee: bool,
+    customer: bool,
     enabled: bool,
     direct: bool,
 }
@@ -290,6 +294,11 @@ async fn context(State(shared): State<Shared>, request: Request) -> Response {
     let Some(scenario) = scenario else {
         return StatusCode::UNAUTHORIZED.into_response();
     };
+    // The platform is authoritative for the actor's current identity. Existing
+    // employee roles on the same account cannot authorize a customer context.
+    if scenario.member_type != "EMPLOYEE" {
+        return StatusCode::FORBIDDEN.into_response();
+    }
     Json(scenario.context()).into_response()
 }
 
@@ -347,6 +356,9 @@ async fn members(State(shared): State<Shared>, request: Request) -> Response {
     let Some(scenario) = scenario else {
         return StatusCode::UNAUTHORIZED.into_response();
     };
+    if scenario.member_type != "EMPLOYEE" {
+        return StatusCode::FORBIDDEN.into_response();
+    }
     if let Some(gate) = &scenario.gate {
         gate.entered.notify_one();
         let permit = gate
@@ -362,7 +374,7 @@ async fn members(State(shared): State<Shared>, request: Request) -> Response {
             let member = state
                 .member_records
                 .get(&(scenario.identity.tenant, organization, user))
-                .filter(|member| member.enabled && member.direct);
+                .filter(|member| member.employee && member.enabled && member.direct);
             let Some(member) = member else {
                 return StatusCode::NOT_FOUND.into_response();
             };
@@ -377,6 +389,7 @@ async fn members(State(shared): State<Shared>, request: Request) -> Response {
                 .filter(|member| {
                     member.identity.tenant == scenario.identity.tenant
                         && member.identity.org == organization
+                        && member.employee
                         && member.enabled
                         && member.direct
                         && member.display_name.to_lowercase().contains(&q)
@@ -424,7 +437,7 @@ async fn members(State(shared): State<Shared>, request: Request) -> Response {
 
 async fn redirect_trap(State(shared): State<Shared>) -> Response {
     shared.lock().unwrap().redirect_hits += 1;
-    Json(json!({"id":"33333333-3333-4333-8333-333333333333","organizationId":"33333333-3333-4333-8333-333333333333","displayName":"must not be reached"})).into_response()
+    Json(json!({"id":"33333333-3333-7333-8333-333333333333","organizationId":"33333333-3333-7333-8333-333333333333","displayName":"must not be reached"})).into_response()
 }
 
 struct Harness {
@@ -623,6 +636,8 @@ impl Harness {
             MemberRecord {
                 identity,
                 display_name: name.to_owned(),
+                employee: true,
+                customer: false,
                 enabled: true,
                 direct: true,
             },
@@ -718,7 +733,7 @@ async fn directory_search_pagination_contract() {
             } else {
                 format!("Alpha 中文 {index}")
             };
-            h.add_member(selected(f.identity, Uuid::new_v4(), f.identity.org), &name);
+            h.add_member(selected(f.identity, Uuid::now_v7(), f.identity.org), &name);
         }
         let first = h.get("writer", "/assignees?action=create").await;
         assert_eq!(first.status, 200, "{}", first.text());
@@ -790,7 +805,7 @@ async fn directory_search_pagination_contract() {
 #[ignore = "requires owned CI PostgreSQL"]
 async fn directory_input_and_upstream_shape_rejection() {
     owned(|f|async move {
-        let h=Harness::new(&f).await;let member=Uuid::new_v4();h.add_member(selected(f.identity,member,f.identity.org),"Member");
+        let h=Harness::new(&f).await;let member=Uuid::now_v7();h.add_member(selected(f.identity,member,f.identity.org),"Member");
         for query in ["","action=read","action=delete","action=create&size=51","action=create&size=0","action=create&page=0",
             "action=create&page=1000001","action=create&page=18446744073709551616","action=create&organizationId=invalid",
             "action=create&tenantId=invalid","action=create&action=update","action=create&q=a&q=b"] {
@@ -800,7 +815,7 @@ async fn directory_input_and_upstream_shape_rejection() {
         h.get("writer",&format!("/assignees?{too_long}")).await.error(400,"VALIDATION_ERROR");h.no_directory();
         let valid=member_row(member,f.identity.org,"Member");
         for patch in [json!({"page":2}),json!({"size":2}),json!({"total":-1}),json!({"total":1.5}),json!({"total":"1"}),json!({"records":null}),
-            json!({"records":[valid.clone(),valid.clone()]}),json!({"records":[member_row(Uuid::new_v4(),Uuid::new_v4(),"other org")]}),
+            json!({"records":[valid.clone(),valid.clone()]}),json!({"records":[member_row(Uuid::now_v7(),Uuid::now_v7(),"other org")]}),
             json!({"records":[{"id":"invalid","organizationId":f.identity.org.to_string(),"displayName":"Member"}]}),
             json!({"records":[member_row(member,f.identity.org," ")]}),json!({"records":[member_row(member,f.identity.org,&"界".repeat(101))]})] {
             let mut scenario=Scenario::allowed(f.identity);scenario.member_mode=MemberMode::Patch(patch);h.put("malformed",scenario);
@@ -815,11 +830,11 @@ async fn directory_input_and_upstream_shape_rejection() {
 async fn directory_authorization_and_scope_matrix() {
     owned(|f| async move {
         let h = Harness::new(&f).await;
-        let child = Uuid::new_v4();
-        let peer = Uuid::new_v4();
-        let parent = Uuid::new_v4();
+        let child = Uuid::now_v7();
+        let peer = Uuid::now_v7();
+        let parent = Uuid::now_v7();
         for organization in [f.identity.org, child, peer, parent] {
-            h.add_member(selected(f.identity, Uuid::new_v4(), organization), "Member");
+            h.add_member(selected(f.identity, Uuid::now_v7(), organization), "Member");
         }
         let cases = [
             (
@@ -923,7 +938,7 @@ async fn directory_authorization_and_scope_matrix() {
 async fn assigned_create_and_idempotent_replay() {
     owned(|f| async move {
         let h = Harness::new(&f).await;
-        let member = selected(f.identity, Uuid::new_v4(), f.identity.org);
+        let member = selected(f.identity, Uuid::now_v7(), f.identity.org);
         h.add_member(member, "Alice 原始快照");
         let body = json!({"title":"assigned creation","assigneeUserId":member.user.to_string()});
         let first = h
@@ -995,27 +1010,188 @@ async fn assigned_create_and_idempotent_replay() {
 
 #[tokio::test]
 #[ignore = "requires owned CI PostgreSQL"]
-async fn assignment_update_clear_and_same_value_preserves_snapshot() {
+async fn explicit_same_assignment_revalidates_and_preserves_snapshot() {
     owned(|f|async move {
-        let h=Harness::new(&f).await;let alice=selected(f.identity,Uuid::new_v4(),f.identity.org);let bob=selected(f.identity,Uuid::new_v4(),f.identity.org);
+        let h=Harness::new(&f).await;let alice=selected(f.identity,Uuid::now_v7(),f.identity.org);let bob=selected(f.identity,Uuid::now_v7(),f.identity.org);
         h.add_member(alice,"Alice 历史名称");h.add_member(bob,"Bob 新名称");
         let first=h.request(Method::POST,"writer","/tickets",Some("assignment-update"),json!({"title":"before","assigneeUserId":alice.user.to_string()})).await;
         assert_eq!(first.status,201);let id=first.json()["id"].as_str().unwrap().to_owned();let path=format!("/tickets/{id}");
-        {let mut state=h.state.lock().unwrap();let alice=state.member_records.get_mut(&(alice.tenant,alice.org,alice.user)).unwrap();alice.display_name="Alice 已更名".into();alice.enabled=false;}
+        {let mut state=h.state.lock().unwrap();let alice=state.member_records.get_mut(&(alice.tenant,alice.org,alice.user)).unwrap();alice.display_name="Alice 已更名".into();}
         for (version,body) in [
             (1,json!({"version":1,"title":"same assignment","assigneeUserId":alice.user.to_string()})),
             (2,json!({"version":2,"title":"same uppercase UUID","assigneeUserId":alice.user.to_string().to_uppercase()})),
-            (3,json!({"version":3,"title":"omitted assignment"})),
         ] {
             let reply=h.request(Method::PATCH,"writer",&path,None,body).await;assert_eq!(reply.status,200,"{}",reply.text());
             assert_eq!(reply.json()["version"],version+1);assert_eq!(reply.json()["assigneeDisplayName"],"Alice 历史名称");
-            assert_eq!(h.member_calls().len(),1,"same assignment preserves its historic snapshot");
+            assert_eq!(h.member_calls().len(),version as usize+1,"every explicit ID obtains a fresh member witness");
         }
+        {let mut state=h.state.lock().unwrap();let alice=state.member_records.get_mut(&(alice.tenant,alice.org,alice.user)).unwrap();alice.enabled=false;alice.customer=true;}
+        let before=row(&f,&id).await;
+        for user in [alice.user.to_string(),alice.user.to_string().to_uppercase()] {
+            h.request(Method::PATCH,"writer",&path,None,json!({"version":3,"title":"must not edit disabled assignment","assigneeUserId":user})).await.error(404,"MEMBER_NOT_FOUND");
+            assert_eq!(row(&f,&id).await,before,"rejected same-ID selection changes no stored fields");
+        }
+        assert_eq!(h.member_calls().len(),5);
+        let omitted=h.request(Method::PATCH,"writer",&path,None,json!({"version":3,"title":"omitted assignment"})).await;
+        assert_eq!(omitted.status,200,"{}",omitted.text());assert_eq!(omitted.json()["version"],4);assert_eq!(omitted.json()["assigneeDisplayName"],"Alice 历史名称");assert_eq!(h.member_calls().len(),5,"omitted assignment retains the historical snapshot without selecting a member");
         let changed=h.request(Method::PATCH,"writer",&path,None,json!({"version":4,"assigneeUserId":bob.user.to_string()})).await;
-        assert_eq!(changed.status,200,"{}",changed.text());assert_eq!(changed.json()["assigneeUserId"],bob.user.to_string());assert_eq!(changed.json()["assigneeDisplayName"],"Bob 新名称");assert_eq!(h.member_calls().len(),2);
+        assert_eq!(changed.status,200,"{}",changed.text());assert_eq!(changed.json()["assigneeUserId"],bob.user.to_string());assert_eq!(changed.json()["assigneeDisplayName"],"Bob 新名称");assert_eq!(h.member_calls().len(),6);
         let cleared=h.request(Method::PATCH,"writer",&path,None,json!({"version":5,"assigneeUserId":null})).await;
-        assert_eq!(cleared.status,200);assert_eq!(cleared.json()["assigneeUserId"],Value::Null);assert_eq!(cleared.json()["assigneeDisplayName"],Value::Null);assert_eq!(h.member_calls().len(),2);
+        assert_eq!(cleared.status,200);assert_eq!(cleared.json()["assigneeUserId"],Value::Null);assert_eq!(cleared.json()["assigneeDisplayName"],Value::Null);assert_eq!(h.member_calls().len(),6);
     }).await;
+}
+
+#[tokio::test]
+#[ignore = "requires owned CI PostgreSQL"]
+async fn employee_candidate_contract_binds_current_actor_and_target_identity() {
+    owned(|f| async move {
+        let h = Harness::new(&f).await;
+        let customer_only = selected(f.identity, Uuid::now_v7(), f.identity.org);
+        let disabled_employee = selected(f.identity, Uuid::now_v7(), f.identity.org);
+        let dual = selected(f.identity, Uuid::now_v7(), f.identity.org);
+        let customer_membership_id = Uuid::now_v7();
+        for (identity, name) in [
+            (customer_only, "Customer only"),
+            (disabled_employee, "Disabled employee with active customer"),
+            (dual, "Dual identity employee"),
+        ] {
+            h.add_member(identity, name);
+        }
+        {
+            let mut state = h.state.lock().unwrap();
+            for identity in [customer_only, disabled_employee, dual] {
+                state
+                    .member_records
+                    .get_mut(&(identity.tenant, identity.org, identity.user))
+                    .unwrap()
+                    .customer = true;
+            }
+            state
+                .member_records
+                .get_mut(&(customer_only.tenant, customer_only.org, customer_only.user))
+                .unwrap()
+                .employee = false;
+            state
+                .member_records
+                .get_mut(&(
+                    disabled_employee.tenant,
+                    disabled_employee.org,
+                    disabled_employee.user,
+                ))
+                .unwrap()
+                .enabled = false;
+        }
+        for action in ["create", "update"] {
+            let reply = h.get("writer", &format!("/assignees?action={action}")).await;
+            assert_eq!(reply.status, 200, "{}", reply.text());
+            assert_eq!(reply.json()["total"], 1);
+            assert_eq!(
+                reply.json()["records"],
+                json!([{"userId":dual.user.to_string(),"displayName":"Dual identity employee","organizationId":dual.org.to_string()}]),
+                "a second customer identity neither duplicates nor excludes an effective employee"
+            );
+        }
+        let base = h.create("identity-candidate-base", "before").await;
+        assert_eq!(base.status, 201);
+        let id = base.json()["id"].as_str().unwrap().to_owned();
+        let path = format!("/tickets/{id}");
+        let before = row(&f, &id).await;
+        let before_counts = counts(&f).await;
+        for (index, user) in [
+            customer_only.user,
+            disabled_employee.user,
+            customer_membership_id,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            h.request(
+                Method::POST,
+                "writer",
+                "/tickets",
+                Some(&format!("invalid-identity-{index}")),
+                json!({"title":"must not select customer identity","assigneeUserId":user.to_string()}),
+            )
+            .await
+            .error(404, "MEMBER_NOT_FOUND");
+            h.request(
+                Method::PATCH,
+                "writer",
+                &path,
+                None,
+                json!({"version":1,"title":"must not mutate","assigneeUserId":user.to_string()}),
+            )
+            .await
+            .error(404, "MEMBER_NOT_FOUND");
+            assert_eq!(row(&f, &id).await, before);
+            assert_eq!(counts(&f).await, before_counts);
+        }
+        let assigned = h
+            .request(
+                Method::POST,
+                "writer",
+                "/tickets",
+                Some("dual-identity-create"),
+                json!({"title":"valid employee selection","assigneeUserId":dual.user.to_string()}),
+            )
+            .await;
+        assert_eq!(assigned.status, 201, "{}", assigned.text());
+        assert_eq!(assigned.json()["assigneeDisplayName"], "Dual identity employee");
+        let updated = h
+            .request(
+                Method::PATCH,
+                "writer",
+                &path,
+                None,
+                json!({"version":1,"assigneeUserId":dual.user.to_string()}),
+            )
+            .await;
+        assert_eq!(updated.status, 200, "{}", updated.text());
+        assert_eq!(updated.json()["assigneeUserId"], dual.user.to_string());
+        assert_eq!(updated.json()["assigneeDisplayName"], "Dual identity employee");
+
+        // The same account retains all configured employee permissions and data
+        // grants in this fixture. The platform still rejects its CUSTOMER context.
+        let mut customer_context = Scenario::allowed(f.identity);
+        customer_context.member_type = "CUSTOMER";
+        h.put("customer-context", customer_context);
+        let before_calls = h.member_calls().len();
+        let before = row(&f, &id).await;
+        let before_counts = counts(&f).await;
+        for action in ["create", "update"] {
+            h.get("customer-context", &format!("/assignees?action={action}"))
+                .await
+                .error(403, "DATA_DENIED");
+        }
+        h.request(
+            Method::POST,
+            "customer-context",
+            "/tickets",
+            Some("customer-context-create"),
+            json!({"title":"customer caller denied","assigneeUserId":dual.user.to_string()}),
+        )
+        .await
+        .error(403, "DATA_DENIED");
+        h.request(
+            Method::PATCH,
+            "customer-context",
+            &path,
+            None,
+            json!({"version":2,"assigneeUserId":dual.user.to_string()}),
+        )
+        .await
+        .error(403, "DATA_DENIED");
+        assert_eq!(h.member_calls().len(), before_calls);
+        assert_eq!(row(&f, &id).await, before);
+        assert_eq!(counts(&f).await, before_counts);
+        let state = h.state.lock().unwrap();
+        let target = state
+            .member_records
+            .get(&(dual.tenant, dual.org, dual.user))
+            .unwrap();
+        assert!(target.employee && target.customer && target.enabled);
+    })
+    .await;
 }
 
 #[tokio::test]
@@ -1027,12 +1203,12 @@ async fn invalid_disabled_and_indirect_members_rejected() {
         assert_eq!(base.status, 201);
         let id = base.json()["id"].as_str().unwrap().to_owned();
         let path = format!("/tickets/{id}");
-        let disabled = selected(f.identity, Uuid::new_v4(), f.identity.org);
-        let indirect = selected(f.identity, Uuid::new_v4(), f.identity.org);
-        let foreign_org = selected(f.identity, Uuid::new_v4(), Uuid::new_v4());
+        let disabled = selected(f.identity, Uuid::now_v7(), f.identity.org);
+        let indirect = selected(f.identity, Uuid::now_v7(), f.identity.org);
+        let foreign_org = selected(f.identity, Uuid::now_v7(), Uuid::now_v7());
         let foreign_tenant = Identity {
-            tenant: Uuid::new_v4(),
-            user: Uuid::new_v4(),
+            tenant: Uuid::now_v7(),
+            user: Uuid::now_v7(),
             ..f.identity
         };
         for member in [disabled, indirect, foreign_org, foreign_tenant] {
@@ -1056,7 +1232,7 @@ async fn invalid_disabled_and_indirect_members_rejected() {
             indirect.user,
             foreign_org.user,
             foreign_tenant.user,
-            Uuid::new_v4(),
+            Uuid::now_v7(),
         ]
         .into_iter()
         .enumerate()
@@ -1100,11 +1276,43 @@ async fn invalid_disabled_and_indirect_members_rejected() {
         .await
         .error(400, "VALIDATION_ERROR");
         assert_eq!(h.member_calls().len(), before);
-        let valid = selected(f.identity, Uuid::new_v4(), f.identity.org);
+        // Explicit old-version/variant/nil negative fixtures must fail before lookup.
+        for raw in [
+            "01900000-0000-4000-8000-000000000001",
+            "01900000-0000-7000-c000-000000000001",
+            "00000000-0000-0000-0000-000000000000",
+        ] {
+            h.request(
+                Method::POST,
+                "writer",
+                "/tickets",
+                Some("invalid-uuid-policy"),
+                json!({"title":"invalid","assigneeUserId":raw}),
+            )
+            .await
+            .error(400, "VALIDATION_ERROR");
+            h.request(
+                Method::PATCH,
+                "writer",
+                &path,
+                None,
+                json!({"version":1,"assigneeUserId":raw}),
+            )
+            .await
+            .error(400, "VALIDATION_ERROR");
+            h.get(
+                "writer",
+                &format!("/assignees?action=create&organizationId={raw}"),
+            )
+            .await
+            .error(400, "VALIDATION_ERROR");
+            assert_eq!(h.member_calls().len(), before);
+        }
+        let valid = selected(f.identity, Uuid::now_v7(), f.identity.org);
         h.add_member(valid, "Valid");
         for patch in [
-            json!({"id":Uuid::new_v4().to_string()}),
-            json!({"organizationId":Uuid::new_v4().to_string()}),
+            json!({"id":Uuid::now_v7().to_string()}),
+            json!({"organizationId":Uuid::now_v7().to_string()}),
             json!({"displayName":" "}),
             json!({"displayName":"界".repeat(101)}),
         ] {
@@ -1133,7 +1341,7 @@ async fn invalid_disabled_and_indirect_members_rejected() {
 async fn member_transport_errors_are_bounded_and_secret_safe() {
     owned(|f| async move {
         let h = Harness::new(&f).await;
-        let member = selected(f.identity, Uuid::new_v4(), f.identity.org);
+        let member = selected(f.identity, Uuid::now_v7(), f.identity.org);
         h.add_member(member, "Member");
         let cases = [
             (MemberMode::Status(401), 401, "INVALID_APP_TOKEN"),
@@ -1204,7 +1412,7 @@ async fn member_wait_holds_no_ticket_lock_or_pool_connection() {
     owned(|f|async move {
         let h=Arc::new(Harness::configured(&f,&[("WORK_ORDERS_DB_MAX_CONNECTIONS","1"),("PLATFORM_AUTH_TIMEOUT_MS","500")]).await);
         let base=h.create("member-wait","before").await;assert_eq!(base.status,201);let id=base.json()["id"].as_str().unwrap().to_owned();
-        let member=selected(f.identity,Uuid::new_v4(),f.identity.org);h.add_member(member,"Member");
+        let member=selected(f.identity,Uuid::now_v7(),f.identity.org);h.add_member(member,"Member");
         let gate=Gate::new();let mut scenario=Scenario::allowed(f.identity);scenario.gate=Some(gate.clone());h.put("waiting",scenario);
         let worker=h.clone();let path=format!("/tickets/{id}");let request=tokio::spawn(async move{
             worker.request(Method::PATCH,"waiting",&path,None,json!({"version":1,"assigneeUserId":member.user.to_string()})).await
@@ -1225,12 +1433,12 @@ async fn member_wait_holds_no_ticket_lock_or_pool_connection() {
 async fn pre_read_organization_change_rejected() {
     owned(|f|async move {
         let h=Arc::new(Harness::new(&f).await);let base=h.create("org-race","before").await;assert_eq!(base.status,201);let id=base.json()["id"].as_str().unwrap().to_owned();
-        let member=selected(f.identity,Uuid::new_v4(),f.identity.org);h.add_member(member,"Original organization member");
+        let member=selected(f.identity,Uuid::now_v7(),f.identity.org);h.add_member(member,"Original organization member");
         let gate=Gate::new();let mut scenario=Scenario::allowed(f.identity);scenario.gate=Some(gate.clone());h.put("org-race",scenario);
         let worker=h.clone();let path=format!("/tickets/{id}");let request=tokio::spawn(async move{
             worker.request(Method::PATCH,"org-race",&path,None,json!({"version":1,"title":"must not mutate moved record","assigneeUserId":member.user.to_string()})).await
         });
-        gate.observed().await;let new_org=Uuid::new_v4();let mut injection=f.pool.begin().await.unwrap();
+        gate.observed().await;let new_org=Uuid::now_v7();let mut injection=f.pool.begin().await.unwrap();
         // This fault is confined to the owned test database. Production's
         // immutable-identity trigger normally prevents this organization move.
         injection.execute("ALTER TABLE public.work_orders DISABLE TRIGGER work_order_identity_immutable").await.unwrap();
@@ -1248,7 +1456,7 @@ async fn pre_read_organization_change_rejected() {
 async fn member_prevalidation_version_race_and_expiry_rollback() {
     owned(|f|async move {
         let h=Arc::new(Harness::configured(&f,&[("WORK_ORDERS_DB_LOCK_TIMEOUT_MS","5000")]).await);
-        let member=selected(f.identity,Uuid::new_v4(),f.identity.org);h.add_member(member,"Member");
+        let member=selected(f.identity,Uuid::now_v7(),f.identity.org);h.add_member(member,"Member");
         for old_assignee_race in [false,true] {
             let key=if old_assignee_race{"old-assignee-race"}else{"version-race"};let base=h.create(key,"before").await;assert_eq!(base.status,201);let id=base.json()["id"].as_str().unwrap().to_owned();
             let gate=Gate::new();let mut scenario=Scenario::allowed(f.identity);scenario.gate=Some(gate.clone());h.put("racing",scenario);
@@ -1258,7 +1466,7 @@ async fn member_prevalidation_version_race_and_expiry_rollback() {
             gate.observed().await;
             if old_assignee_race {
                 sqlx::query("UPDATE public.work_orders SET assignee_user_id=$1,assignee_display_name='Concurrent snapshot' WHERE id=$2")
-                    .bind(Uuid::new_v4()).bind(Uuid::parse_str(&id).unwrap()).execute(&f.pool).await.unwrap();
+                    .bind(Uuid::now_v7()).bind(Uuid::parse_str(&id).unwrap()).execute(&f.pool).await.unwrap();
             } else {
                 sqlx::query("UPDATE public.work_orders SET title='parallel edit',version=2 WHERE id=$1").bind(Uuid::parse_str(&id).unwrap()).execute(&f.pool).await.unwrap();
             }
@@ -1267,23 +1475,28 @@ async fn member_prevalidation_version_race_and_expiry_rollback() {
             assert_eq!(after["version"],if old_assignee_race{1}else{2});
         }
         let timed=Arc::new(Harness::configured(&f,&[("PLATFORM_AUTH_TIMEOUT_MS","500"),("WORK_ORDERS_DB_LOCK_TIMEOUT_MS","5000")]).await);timed.add_member(member,"Member");
-        let base=timed.create("expired-member","before").await;assert_eq!(base.status,201);let id=base.json()["id"].as_str().unwrap().to_owned();
-        let mut blocker=f.pool.begin().await.unwrap();sqlx::query("SELECT id FROM public.work_orders WHERE id=$1 FOR UPDATE").bind(Uuid::parse_str(&id).unwrap()).fetch_one(&mut *blocker).await.unwrap();
-        let slow_member=Gate::new();let mut scenario=Scenario::allowed(f.identity);scenario.gate=Some(slow_member.clone());timed.put("ttl-member",scenario);
-        let worker=timed.clone();let path=format!("/tickets/{id}");let request=tokio::spawn(async move{
-            worker.request(Method::PATCH,"ttl-member",&path,None,json!({"version":1,"assigneeUserId":member.user.to_string()})).await
-        });
-        slow_member.observed().await;let started=timed.member_calls().last().unwrap().started;
-        // Consume part of the 500 ms budget in the HTTP exchange itself. A
-        // mistaken fresh TTL starting at response completion would outlive the
-        // point below, and would wrongly allow the mutation after unlocking.
-        tokio::time::sleep_until(tokio::time::Instant::from_std(started+Duration::from_millis(200))).await;
-        slow_member.release.add_permits(1);wait_for_lock(&f,"FOR UPDATE").await;
-        // The independent 28-second authorization context remains valid.
-        tokio::time::sleep_until(tokio::time::Instant::from_std(started+Duration::from_millis(550))).await;
-        blocker.rollback().await.unwrap();request.await.unwrap().error(503,"MEMBER_VALIDATION_EXPIRED");
-        let after=row(&f,&id).await;assert_eq!(after["version"],1);assert_eq!(after["title"],"before");assert_eq!(after["assignee_user_id"],Value::Null);
-        println!("WORK_ORDERS_MEMBER_EXPIRY_PROOF assertion_ms=500 http_budget_consumed_ms=200 context_seconds=28 lock_wait_observed=true rollback=true");
+        for same_assignee in [false,true] {
+            let key=if same_assignee{"expired-same-member"}else{"expired-member"};
+            let base=timed.request(Method::POST,"writer","/tickets",Some(key),json!({"title":"before","assigneeUserId":same_assignee.then(||member.user.to_string())})).await;
+            assert_eq!(base.status,201);let id=base.json()["id"].as_str().unwrap().to_owned();
+            let before=row(&f,&id).await;
+            let mut blocker=f.pool.begin().await.unwrap();sqlx::query("SELECT id FROM public.work_orders WHERE id=$1 FOR UPDATE").bind(Uuid::parse_str(&id).unwrap()).fetch_one(&mut *blocker).await.unwrap();
+            let slow_member=Gate::new();let mut scenario=Scenario::allowed(f.identity);scenario.gate=Some(slow_member.clone());timed.put("ttl-member",scenario);
+            let worker=timed.clone();let path=format!("/tickets/{id}");let request=tokio::spawn(async move{
+                worker.request(Method::PATCH,"ttl-member",&path,None,json!({"version":1,"title":"must roll back","assigneeUserId":member.user.to_string()})).await
+            });
+            slow_member.observed().await;let started=timed.member_calls().last().unwrap().started;
+            // Consume part of the 500 ms budget in the HTTP exchange itself. A
+            // mistaken fresh TTL starting at response completion would outlive
+            // this point and wrongly allow the mutation after unlocking.
+            tokio::time::sleep_until(tokio::time::Instant::from_std(started+Duration::from_millis(200))).await;
+            slow_member.release.add_permits(1);wait_for_lock(&f,"FOR UPDATE").await;
+            // The independent 28-second authorization context remains valid.
+            tokio::time::sleep_until(tokio::time::Instant::from_std(started+Duration::from_millis(550))).await;
+            blocker.rollback().await.unwrap();request.await.unwrap().error(503,"MEMBER_VALIDATION_EXPIRED");
+            assert_eq!(row(&f,&id).await,before,"same-ID and replacement witnesses both expire while waiting for the lock");
+            println!("WORK_ORDERS_MEMBER_EXPIRY_PROOF same_assignment={same_assignee} assertion_ms=500 http_budget_consumed_ms=200 context_seconds=28 lock_wait_observed=true rollback=true");
+        }
     }).await;
 }
 
@@ -1291,7 +1504,7 @@ async fn member_prevalidation_version_race_and_expiry_rollback() {
 #[ignore = "requires owned CI PostgreSQL"]
 async fn assignment_scope_does_not_expand_self_access() {
     owned(|f|async move {
-        let h=Harness::new(&f).await;let child=Uuid::new_v4();let child_assignee=Uuid::new_v4();let other_owner=Identity{user:Uuid::new_v4(),..f.identity};
+        let h=Harness::new(&f).await;let child=Uuid::now_v7();let child_assignee=Uuid::now_v7();let other_owner=Identity{user:Uuid::now_v7(),..f.identity};
         h.put("other-owner",Scenario::allowed(other_owner));h.add_member(f.identity,"Caller as assignee");
         let assigned=h.request(Method::POST,"other-owner","/tickets",Some("not-owned"),json!({"title":"assigned but not owned","assigneeUserId":f.identity.user.to_string()})).await;assert_eq!(assigned.status,201);
         let assigned_id=assigned.json()["id"].as_str().unwrap().to_owned();
@@ -1301,18 +1514,18 @@ async fn assignment_scope_does_not_expand_self_access() {
         h.get("writer",&format!("/tickets/{assigned_id}")).await.error(404,"RESOURCE_NOT_FOUND");
         h.request(Method::PATCH,"writer",&format!("/tickets/{assigned_id}"),None,json!({"version":1,"title":"assignee bypass"})).await.error(404,"RESOURCE_NOT_FOUND");
         h.request(Method::DELETE,"writer",&format!("/tickets/{assigned_id}"),None,json!({"version":1})).await.error(404,"RESOURCE_NOT_FOUND");
-        let owned_child=Uuid::new_v4();
+        let owned_child=Uuid::now_v7();
         sqlx::query("INSERT INTO public.work_orders(id,number,tenant_id,organization_id,organization_name,owner_user_id,owner_display_name,title,assignee_user_id,assignee_display_name) VALUES($1,'HISTORIC-CHILD',$2,$3,'Child',$4,'Owner','Historical child record',$5,'Historic Child Assignee')")
             .bind(owned_child).bind(f.identity.tenant).bind(child).bind(f.identity.user).bind(child_assignee).execute(&f.pool).await.unwrap();
         let path=format!("/tickets/{owned_child}");let before=h.member_calls().len();
-        let same=h.request(Method::PATCH,"writer",&path,None,json!({"version":1,"title":"same historical assignment","assigneeUserId":child_assignee.to_string()})).await;
-        assert_eq!(same.status,200,"{}",same.text());assert_eq!(same.json()["assigneeDisplayName"],"Historic Child Assignee");assert_eq!(h.member_calls().len(),before);
-        let ordinary=h.request(Method::PATCH,"writer",&path,None,json!({"version":2,"title":"ordinary owner edit"})).await;assert_eq!(ordinary.status,200);
-        h.request(Method::PATCH,"writer",&path,None,json!({"version":3,"assigneeUserId":null})).await.error(403,"DATA_DENIED");
-        h.request(Method::PATCH,"writer",&path,None,json!({"version":3,"assigneeUserId":Uuid::new_v4().to_string()})).await.error(403,"DATA_DENIED");assert_eq!(h.member_calls().len(),before);
+        h.request(Method::PATCH,"writer",&path,None,json!({"version":1,"title":"same historical assignment","assigneeUserId":child_assignee.to_string()})).await.error(403,"DATA_DENIED");
+        assert_eq!(row(&f,&owned_child.to_string()).await["version"],1);assert_eq!(h.member_calls().len(),before,"same-ID selection obeys the organization scope before HTTP");
+        let ordinary=h.request(Method::PATCH,"writer",&path,None,json!({"version":1,"title":"ordinary owner edit"})).await;assert_eq!(ordinary.status,200);assert_eq!(ordinary.json()["assigneeDisplayName"],"Historic Child Assignee");
+        h.request(Method::PATCH,"writer",&path,None,json!({"version":2,"assigneeUserId":null})).await.error(403,"DATA_DENIED");
+        h.request(Method::PATCH,"writer",&path,None,json!({"version":2,"assigneeUserId":Uuid::now_v7().to_string()})).await.error(403,"DATA_DENIED");assert_eq!(h.member_calls().len(),before);
         self_only.ceiling=jids(&[f.identity.org]);h.put("writer",self_only);
         h.get("writer",&path).await.error(404,"RESOURCE_NOT_FOUND");
-        h.request(Method::PATCH,"writer",&path,None,json!({"version":3,"assigneeUserId":child_assignee.to_string()})).await.error(404,"RESOURCE_NOT_FOUND");
+        h.request(Method::PATCH,"writer",&path,None,json!({"version":2,"assigneeUserId":child_assignee.to_string()})).await.error(404,"RESOURCE_NOT_FOUND");
     }).await;
 }
 
@@ -1321,7 +1534,7 @@ async fn assignment_scope_does_not_expand_self_access() {
 async fn current_grant_or_membership_revocation_next_request() {
     owned(|f| async move {
         let h = Harness::new(&f).await;
-        let member = selected(f.identity, Uuid::new_v4(), f.identity.org);
+        let member = selected(f.identity, Uuid::now_v7(), f.identity.org);
         h.add_member(member, "Initially effective");
         let base = h.create("revocation-base", "before").await;
         assert_eq!(base.status, 201);

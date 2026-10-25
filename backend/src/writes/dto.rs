@@ -251,18 +251,7 @@ pub(super) fn idempotency_key(value: &str) -> Result<(), ApiError> {
 }
 
 pub(super) fn canonical_uuid(value: &str) -> Result<Uuid, ApiError> {
-    if value.len() != 36
-        || value.bytes().enumerate().any(|(index, byte)| {
-            if [8, 13, 18, 23].contains(&index) {
-                byte != b'-'
-            } else {
-                !byte.is_ascii_hexdigit()
-            }
-        })
-    {
-        return Err(ApiError::validation());
-    }
-    Uuid::parse_str(value).map_err(|_| ApiError::validation())
+    crate::uuid_v7::parse(value).ok_or_else(ApiError::validation)
 }
 
 pub(super) fn fingerprint(value: &Create) -> Result<String, ApiError> {
@@ -333,10 +322,10 @@ mod tests {
     #[test]
     fn assignment_uuid_normalization_preserves_create_identity_and_patch_presence() {
         let lower =
-            create(br#"{"title":"x","assigneeUserId":"00112233-4455-6677-8899-aabbccddeeff"}"#)
+            create(br#"{"title":"x","assigneeUserId":"00112233-4455-7677-8899-aabbccddeeff"}"#)
                 .expect("lowercase");
         let upper =
-            create(br#"{"title":"x","assigneeUserId":"00112233-4455-6677-8899-AABBCCDDEEFF"}"#)
+            create(br#"{"title":"x","assigneeUserId":"00112233-4455-7677-8899-AABBCCDDEEFF"}"#)
                 .expect("uppercase");
         assert_eq!(fingerprint(&lower), fingerprint(&upper));
         assert_ne!(
@@ -349,12 +338,12 @@ mod tests {
                 .assignee_user_id,
             Patch::Absent
         ));
-        match update(br#"{"version":1,"assigneeUserId":"00112233-4455-6677-8899-AABBCCDDEEFF"}"#)
+        match update(br#"{"version":1,"assigneeUserId":"00112233-4455-7677-8899-AABBCCDDEEFF"}"#)
             .expect("normalized patch")
             .assignee_user_id
         {
             Patch::Present(Some(value)) => {
-                assert_eq!(value, "00112233-4455-6677-8899-aabbccddeeff")
+                assert_eq!(value, "00112233-4455-7677-8899-aabbccddeeff")
             }
             _ => panic!("explicit assignment was lost"),
         }
@@ -423,7 +412,7 @@ mod tests {
         for key in ["", "space key", "é", "x\ny", &"x".repeat(129)] {
             assert!(idempotency_key(key).is_err());
         }
-        assert!(canonical_uuid("00112233-4455-6677-8899-AABBCCDDEEFF").is_ok());
+        assert!(canonical_uuid("00112233-4455-7677-8899-AABBCCDDEEFF").is_ok());
         assert!(canonical_uuid("00112233445566778899aabbccddeeff").is_err());
     }
 }

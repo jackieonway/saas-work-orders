@@ -16,12 +16,12 @@ use uuid::Uuid;
 
 use super::*;
 
-const USER: &str = "11111111-1111-4111-8111-111111111111";
-const TENANT: &str = "22222222-2222-4222-8222-222222222222";
-const ORG: &str = "33333333-3333-4333-8333-333333333333";
-const CHILD: &str = "44444444-4444-4444-8444-444444444444";
-const APP: &str = "55555555-5555-4555-8555-555555555555";
-const REQUEST_ID: &str = "66666666-6666-4666-8666-666666666666";
+const USER: &str = "11111111-1111-7111-8111-111111111111";
+const TENANT: &str = "22222222-2222-7222-8222-222222222222";
+const ORG: &str = "33333333-3333-7333-8333-333333333333";
+const CHILD: &str = "44444444-4444-7444-8444-444444444444";
+const APP: &str = "55555555-5555-7555-8555-555555555555";
+const REQUEST_ID: &str = "66666666-6666-7666-8666-666666666666";
 
 fn intro(now: i64) -> Value {
     json!({"active":true,"aud":"work-orders","sub":USER,"tenant_id":TENANT,
@@ -85,7 +85,7 @@ fn creation_and_assignment_targets_obey_scope_and_organization_ceiling() {
     let now = policy::now_millis();
     let current = Uuid::parse_str(ORG).unwrap();
     let child = Uuid::parse_str(CHILD).unwrap();
-    let outsider = Uuid::new_v4();
+    let outsider = crate::uuid_v7::new();
     for (scope, organizations, child_allowed) in [
         ("SELF", json!([]), false),
         ("ORG", json!([ORG]), false),

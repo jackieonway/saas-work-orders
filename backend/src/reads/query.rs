@@ -62,18 +62,7 @@ fn decode(value: &str) -> Result<String, ApiError> {
 }
 
 pub(super) fn canonical_uuid(value: &str) -> Result<Uuid, ApiError> {
-    if value.len() != 36
-        || value.bytes().enumerate().any(|(index, byte)| {
-            if [8, 13, 18, 23].contains(&index) {
-                byte != b'-'
-            } else {
-                !byte.is_ascii_hexdigit()
-            }
-        })
-    {
-        return Err(invalid());
-    }
-    Uuid::parse_str(value).map_err(|_| invalid())
+    crate::uuid_v7::parse(value).ok_or_else(ApiError::validation)
 }
 
 fn positive(value: &str, maximum: u32) -> Result<u32, ApiError> {
@@ -217,7 +206,16 @@ mod tests {
         }
         assert!(export(Some("page=1")).is_err());
         assert!(export(Some("size=20")).is_err());
-        assert!(canonical_uuid("00112233-4455-6677-8899-AABBCCDDEEFF").is_ok());
+        assert!(canonical_uuid("00112233-4455-7677-8899-AABBCCDDEEFF").is_ok());
+        // Historical v4/nil/wrong-variant IDs must not become an absent filter.
+        for raw in [
+            "00112233-4455-4677-8899-aabbccddeeff",
+            "00000000-0000-0000-0000-000000000000",
+            "00112233-4455-7677-c899-aabbccddeeff",
+        ] {
+            assert!(canonical_uuid(raw).is_err());
+            assert!(list(Some(&format!("organizationId={raw}"))).is_err());
+        }
     }
 
     #[test]

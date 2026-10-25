@@ -1,7 +1,8 @@
 // Real HTTP fixture and independently owned PostgreSQL database. This is not the
 // genuine platform E2E suite: only the platform responses below are test fixtures.
 import assert from 'node:assert/strict'
-import { createHash, randomUUID } from 'node:crypto'
+import { createHash } from 'node:crypto'
+import { newId } from '../uuid.mjs'
 import { readFile } from 'node:fs/promises'
 import { createServer as createHttpServer } from 'node:http'
 import { parseEnv } from 'node:util'
@@ -45,7 +46,7 @@ function isolatedUrl(source, name) {
 }
 
 export async function isolatedDatabase(t, connectionString) {
-  const name = `work_orders_test_${randomUUID().replaceAll('-', '')}`
+  const name = `work_orders_test_${newId().replaceAll('-', '')}`
   const expectedName = name
   let admin
   let pool
@@ -104,7 +105,7 @@ export async function closeHttp(server) {
   await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()))
 }
 
-export function identity(userId = randomUUID(), tenantId = randomUUID(), organizationId = randomUUID()) {
+export function identity(userId = newId(), tenantId = newId(), organizationId = newId()) {
   return { userId, tenantId, organizationId }
 }
 
@@ -190,7 +191,7 @@ export async function platformFixture(t) {
         json(response, 200, {
           active: state.active, aud: APP_CODE, sub: state.actor.userId,
           tenant_id: state.actor.tenantId, organization_id: state.actor.organizationId,
-          token_type: 'Bearer', client_id: CLIENT_ID, scope: 'profile', jti: randomUUID(),
+          token_type: 'Bearer', client_id: CLIENT_ID, scope: 'profile', jti: newId(),
           iat: Math.floor(Date.now() / 1000), exp: Math.floor(Date.now() / 1000) + 300,
           ...state.introPatch,
         })
@@ -198,7 +199,7 @@ export async function platformFixture(t) {
         json(response, 200, {
           contractVersion: '1.0', contextVersion: createHash('sha256').update(`fixture-${state.calls.context}`).digest('hex'), appCode: APP_CODE,
           expiresAt: new Date(Date.now() + 25_000).toISOString(),
-          application: { id: randomUUID(), name: '宸ュ崟娴嬭瘯', runtimeMode: 'IFRAME', entryType: 'HTML', entryUrl: '/fixture/index.html' },
+          application: { id: newId(), name: '宸ュ崟娴嬭瘯', runtimeMode: 'IFRAME', entryType: 'HTML', entryUrl: '/fixture/index.html' },
           user: { id: state.actor.userId, username: 'fixture-user', displayName: 'Fixture User' },
           tenant: { id: state.actor.tenantId, code: 'fixture', name: 'Fixture Tenant' },
           organization: { id: state.actor.organizationId, name: 'Fixture Organization', path: 'Fixture' },
@@ -218,7 +219,7 @@ export async function platformFixture(t) {
         const hash = createHash('sha256').update(JSON.stringify(body)).digest('hex')
         const existing = publications.get(namespace)
         if (existing && existing.hash !== hash) { json(response, 409, { error: 'idempotency conflict' }); return }
-        const result = existing?.result ?? { publicationId: randomUUID(), recipientCount: 1, deliveryCount: 1, duplicate: false, createdAt: new Date().toISOString() }
+        const result = existing?.result ?? { publicationId: newId(), recipientCount: 1, deliveryCount: 1, duplicate: false, createdAt: new Date().toISOString() }
         if (!existing) publications.set(namespace, { hash, result })
         json(response, 200, { ...result, duplicate: Boolean(existing), ...state.notificationPatch })
       } else {
@@ -251,7 +252,7 @@ export async function platformFixture(t) {
   return {
     url, states, members, observations, notifications,
     get trapCount() { return trapCount },
-    add(actor, label = randomUUID()) {
+    add(actor, label = newId()) {
       const token = `fixture-app-${label}`
       const state = actorState(actor)
       states.set(token, state)
@@ -316,21 +317,21 @@ export async function matrix(t, connectionString) {
   const database = await isolatedDatabase(t, connectionString)
   const platform = await platformFixture(t)
   const service = await businessServer(t, database.pool, platform.url)
-  const tenantA = randomUUID()
-  const tenantB = randomUUID()
-  const root = randomUUID()
-  const child = randomUUID()
-  const peer = randomUUID()
-  const remote = randomUUID()
-  const user = randomUUID()
+  const tenantA = newId()
+  const tenantB = newId()
+  const root = newId()
+  const child = newId()
+  const peer = newId()
+  const remote = newId()
+  const user = newId()
   const actors = {
     root: platform.add(identity(user, tenantA, root), 'a-root'),
-    other: platform.add(identity(randomUUID(), tenantA, root), 'a-root-other'),
+    other: platform.add(identity(newId(), tenantA, root), 'a-root-other'),
     ownChild: platform.add(identity(user, tenantA, child), 'a-child-own'),
-    child: platform.add(identity(randomUUID(), tenantA, child), 'a-child-other'),
-    peer: platform.add(identity(randomUUID(), tenantA, peer), 'a-peer'),
+    child: platform.add(identity(newId(), tenantA, child), 'a-child-other'),
+    peer: platform.add(identity(newId(), tenantA, peer), 'a-peer'),
     ownRemote: platform.add(identity(user, tenantB, remote), 'b-same-global-user'),
-    remote: platform.add(identity(randomUUID(), tenantB, remote), 'b-other'),
+    remote: platform.add(identity(newId(), tenantB, remote), 'b-other'),
   }
   const tickets = {
     ownRoot: await createTicket(service.url, actors.root, 'Own root ticket'),

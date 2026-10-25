@@ -11,6 +11,7 @@ use axum::{
 };
 use serde::Serialize;
 use sqlx::PgPool;
+#[cfg(test)]
 use uuid::Uuid;
 
 use crate::{
@@ -597,13 +598,11 @@ fn single_header<'a>(headers: &'a HeaderMap, name: &'static str) -> Result<Optio
 fn canonical_request_id<'a>(mut values: impl Iterator<Item = &'a HeaderValue>) -> String {
     let value = values.next().and_then(|header| header.to_str().ok());
     let supplied = if values.next().is_none() {
-        value
-            .filter(|value| value.len() == 36)
-            .and_then(|value| Uuid::parse_str(value).ok())
+        value.and_then(crate::uuid_v7::parse)
     } else {
         None
     };
-    supplied.unwrap_or_else(Uuid::new_v4).to_string()
+    supplied.unwrap_or_else(crate::uuid_v7::new).to_string()
 }
 
 async fn private_metrics(State(state): State<HealthState>, headers: HeaderMap) -> Response {
@@ -721,7 +720,7 @@ mod tests {
 
     #[tokio::test]
     async fn request_id_is_canonical_and_untrusted_paths_do_not_enter_error_text() {
-        let id = "550E8400-E29B-41D4-A716-446655440000";
+        let id = "550E8400-E29B-71D4-A716-446655440000";
         let result = app()
             .oneshot(
                 Request::builder()
@@ -954,15 +953,15 @@ mod tests {
     #[test]
     fn duplicate_or_noncanonical_ids_are_replaced() {
         let headers = [
-            HeaderValue::from_static("550e8400-e29b-41d4-a716-446655440000"),
-            HeaderValue::from_static("550e8400-e29b-41d4-a716-446655440000"),
+            HeaderValue::from_static("550e8400-e29b-71d4-a716-446655440000"),
+            HeaderValue::from_static("550e8400-e29b-71d4-a716-446655440000"),
         ];
         let id = canonical_request_id(headers.iter());
         assert_ne!(id, headers[0].to_str().unwrap());
         let headers = [HeaderValue::from_static("550e8400e29b41d4a716446655440000")];
         assert_ne!(
             canonical_request_id(headers.iter()),
-            "550e8400-e29b-41d4-a716-446655440000"
+            "550e8400-e29b-71d4-a716-446655440000"
         );
     }
 }

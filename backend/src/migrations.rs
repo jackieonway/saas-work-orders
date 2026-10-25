@@ -14,6 +14,8 @@ use sqlx::{
 const BASELINE_SQL: &str = include_str!("../migrations/0001_work_orders.sql");
 const IDEMPOTENCY_SQL: &str = include_str!("../migrations/0002_create_idempotency.sql");
 const REMINDER_SQL: &str = include_str!("../migrations/0003_reminder_intents.sql");
+const UUID_POLICY_SQL: &str = include_str!("../migrations/0004_uuid_v7.sql");
+const UUID_POLICY_VERSION: &str = "0004_uuid_v7.sql";
 const LEGACY_VERSION: &str = "0001_work_orders.sql";
 const IDEMPOTENCY_VERSION: &str = "0002_create_idempotency.sql";
 const REMINDER_VERSION: &str = "0003_reminder_intents.sql";
@@ -142,7 +144,7 @@ fn baseline() -> Result<Migration, MigrationError> {
     ))
 }
 
-fn migrations() -> Result<[Migration; 3], MigrationError> {
+fn migrations() -> Result<[Migration; 4], MigrationError> {
     Ok([
         baseline()?,
         Migration::new(
@@ -157,6 +159,13 @@ fn migrations() -> Result<[Migration; 3], MigrationError> {
             Cow::Borrowed("reminder intents"),
             MigrationType::Simple,
             Cow::Borrowed(REMINDER_SQL),
+            false,
+        ),
+        Migration::new(
+            4,
+            Cow::Borrowed("uuid v7"),
+            MigrationType::Simple,
+            Cow::Borrowed(UUID_POLICY_SQL),
             false,
         ),
     ])
@@ -183,7 +192,7 @@ pub(crate) async fn initialize(pool: &PgPool) -> Result<MigrationOutcome, Migrat
     let state = catalog::inventory(&mut transaction).await?;
 
     // Only internally generated, ASCII identifier bytes enter DDL identifiers.
-    let reference = format!("work_order_baseline_{}", uuid::Uuid::new_v4().simple());
+    let reference = format!("work_order_baseline_{}", crate::uuid_v7::new().simple());
     execute_batch(&mut transaction, &format!("CREATE SCHEMA {reference}")).await?;
     set_schema(&mut transaction, &reference).await?;
     execute_batch(&mut transaction, LEGACY_TABLE_SQL).await?;
@@ -197,6 +206,9 @@ pub(crate) async fn initialize(pool: &PgPool) -> Result<MigrationOutcome, Migrat
     execute_batch(&mut transaction, REMINDER_SQL).await?;
     let reference_legacy_v3 = catalog::snapshot(&mut transaction, &reference, false).await?;
     let reference_current_v3 = catalog::snapshot(&mut transaction, &reference, true).await?;
+    execute_batch(&mut transaction, UUID_POLICY_SQL).await?;
+    let reference_legacy_v4 = catalog::snapshot(&mut transaction, &reference, false).await?;
+    let reference_current_v4 = catalog::snapshot(&mut transaction, &reference, true).await?;
     set_schema(&mut transaction, "public").await?;
 
     let (outcome, legacy_count, sqlx_count) = match state {
@@ -222,7 +234,11 @@ pub(crate) async fn initialize(pool: &PgPool) -> Result<MigrationOutcome, Migrat
             // the compatibility ledger, or a table ahead of its history, is not
             // a legitimate transition produced by either supported runner.
             let schema_version = if reminders {
-                3
+                if legacy_count == 4 {
+                    4
+                } else {
+                    3
+                }
             } else if idempotency {
                 2
             } else {
@@ -231,14 +247,16 @@ pub(crate) async fn initialize(pool: &PgPool) -> Result<MigrationOutcome, Migrat
             if legacy_count != schema_version || sqlx_count > legacy_count {
                 return Err(MigrationError::invalid(Failure::LegacyHistory));
             }
-            let reference = match (sqlx, idempotency, reminders) {
-                (false, false, false) => &reference_legacy_v1,
-                (true, false, false) => &reference_current_v1,
-                (false, true, false) => &reference_legacy_v2,
-                (true, true, false) => &reference_current_v2,
-                (false, true, true) => &reference_legacy_v3,
-                (true, true, true) => &reference_current_v3,
-                (_, false, true) => return Err(MigrationError::invalid(Failure::SchemaDrift)),
+            let reference = match (sqlx, legacy_count) {
+                (false, 1) => &reference_legacy_v1,
+                (true, 1) => &reference_current_v1,
+                (false, 2) => &reference_legacy_v2,
+                (true, 2) => &reference_current_v2,
+                (false, 3) => &reference_legacy_v3,
+                (true, 3) => &reference_current_v3,
+                (false, 4) => &reference_legacy_v4,
+                (true, 4) => &reference_current_v4,
+                _ => return Err(MigrationError::invalid(Failure::SchemaDrift)),
             };
             if &catalog::snapshot(&mut transaction, "public", sqlx).await? != reference {
                 return Err(MigrationError::invalid(Failure::SchemaDrift));
@@ -264,7 +282,7 @@ pub(crate) async fn initialize(pool: &PgPool) -> Result<MigrationOutcome, Migrat
     }
     if validate_legacy(&mut transaction, &migrations).await? != migrations.len()
         || validate_sqlx(&mut transaction, &migrations).await? != migrations.len()
-        || catalog::snapshot(&mut transaction, "public", true).await? != reference_current_v3
+        || catalog::snapshot(&mut transaction, "public", true).await? != reference_current_v4
     {
         return Err(MigrationError::invalid(Failure::SchemaDrift));
     }
@@ -352,7 +370,7 @@ async fn validate_legacy(
     migrations: &[Migration],
 ) -> Result<usize, MigrationError> {
     let rows: Vec<(String, String, bool)> = sqlx::query_as(
-        "SELECT version,checksum,applied_at IS NOT NULL FROM public.work_order_migrations ORDER BY version LIMIT 4",
+        "SELECT version,checksum,applied_at IS NOT NULL FROM public.work_order_migrations ORDER BY version LIMIT 5",
     )
     .fetch_all(connection)
     .await?;
@@ -374,7 +392,7 @@ async fn validate_sqlx(
     migrations: &[Migration],
 ) -> Result<usize, MigrationError> {
     let rows: Vec<(i64, String, bool, Vec<u8>, i64, bool)> = sqlx::query_as(
-        "SELECT version,description,success,checksum,execution_time,installed_on IS NOT NULL FROM public._sqlx_migrations ORDER BY version LIMIT 4",
+        "SELECT version,description,success,checksum,execution_time,installed_on IS NOT NULL FROM public._sqlx_migrations ORDER BY version LIMIT 5",
     )
     .fetch_all(connection)
     .await?;
@@ -400,6 +418,7 @@ fn legacy_version(version: i64) -> Result<&'static str, MigrationError> {
         1 => Ok(LEGACY_VERSION),
         2 => Ok(IDEMPOTENCY_VERSION),
         3 => Ok(REMINDER_VERSION),
+        4 => Ok(UUID_POLICY_VERSION),
         _ => Err(MigrationError::invalid(Failure::LegacyHistory)),
     }
 }
@@ -410,10 +429,16 @@ fn legacy_version(version: i64) -> Result<&'static str, MigrationError> {
 /// immutable-identity trigger. It deliberately does not create a reference schema
 /// per probe or claim to repeat startup's complete catalog comparison.
 pub(crate) async fn verify_database(pool: &PgPool) -> Result<(), MigrationError> {
-    let migrations = migrations()?;
     let mut connection = pool.acquire().await?;
-    if validate_legacy(&mut connection, &migrations).await? != migrations.len()
-        || validate_sqlx(&mut connection, &migrations).await? != migrations.len()
+    verify_connection(&mut connection).await
+}
+
+/// Required-history/readiness checks shared with imported startup. Imported
+/// startup separately proves the complete authenticated catalog material first.
+pub(crate) async fn verify_connection(connection: &mut PgConnection) -> Result<(), MigrationError> {
+    let migrations = migrations()?;
+    if validate_legacy(&mut *connection, &migrations).await? != migrations.len()
+        || validate_sqlx(&mut *connection, &migrations).await? != migrations.len()
     {
         return Err(MigrationError::invalid(Failure::LegacyHistory));
     }
@@ -423,6 +448,12 @@ pub(crate) async fn verify_database(pool: &PgPool) -> Result<(), MigrationError>
     .fetch_one(&mut *connection)
     .await?;
     if !usable {
+        return Err(MigrationError::invalid(Failure::SchemaDrift));
+    }
+    let uuid_guards: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM pg_catalog.pg_constraint c JOIN pg_catalog.pg_class t ON t.oid=c.conrelid JOIN pg_catalog.pg_namespace n ON n.oid=t.relnamespace WHERE n.nspname='public' AND c.contype='c' AND c.convalidated AND c.conname LIKE '%\\_uuid\\_v7' ESCAPE '\\'",
+    ).fetch_one(&mut *connection).await?;
+    if uuid_guards != 17 {
         return Err(MigrationError::invalid(Failure::SchemaDrift));
     }
     // Referencing the real required columns also detects dropped/replaced tables.

@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "sourceRepository": "rust-saas",
   "sourceRevision": "120c211587460f391cf30db73350188ee4ab1882",
-  "sdkVersion": "2.0.0",
+  "sdkVersion": "3.0.0",
   "files": {
     "backend/vendor/operational-telemetry/Cargo.lock": "2e3b612bc2ba42434b7ddbc32446442657356364a6083b951a3c5f16ae4cdf9a",
     "backend/vendor/operational-telemetry/Cargo.toml": "9f3b14ff00778e84b66b085ba9aa1b56f97b742f68c6c5a00ef15cf9722b5818",
@@ -14,27 +14,27 @@
     "frontend/deploy/gateway-policy.mjs": "3fdd1d69f7898706f34a5faadfc22e6356a57fc8ddabcf5d505ea6729d00c5cc",
     "backend/manifests/grants.manifest.example.json": "d281fa3a0cc107eb51e33e56fda0c8f2b101c9c6c89a76db15dde89bda6d2e63",
     "frontend/deploy/render-static.mjs": "226f7a44df10c8f164ac6a0bd4ac684ee0e50795ad51b77081ad86c2402231ae",
-    "frontend/vendor/micro-sdk/artifact-manifest.json": "2e6007209f63dba709157eb6cd37ef7c4961c679e10b2dbbfad6690836143c3c",
+    "frontend/vendor/micro-sdk/artifact-manifest.json": "02fe52794596edf08e8220c60aff3640a1401f0416ebec71ca0d37b154c40b47",
     "frontend/vendor/micro-sdk/capabilities.d.mts": "4d68d6b325cca39df0312eae9eb6efb7affa55763efe0bbb52f6c30aaeccd6af",
     "frontend/vendor/micro-sdk/http.d.mts": "82c41e76d47c873dd1209b831d482b8521ace0586167083b5e7eef0b96b36c3f",
     "frontend/vendor/micro-sdk/index.d.mts": "9562bfba60aef34811e2c98e59bfef715ef29966d8a4c9493deac77bf351fe10",
     "frontend/vendor/micro-sdk/index.d.ts": "9562bfba60aef34811e2c98e59bfef715ef29966d8a4c9493deac77bf351fe10",
-    "frontend/vendor/micro-sdk/index.mjs": "fc8080c2e6d01c262788a3f48232cb2659a558f635ebef7d8991ae8738f443ce",
-    "frontend/vendor/micro-sdk/package.json": "038f282ef3696abce27e1e61a3f7e7745a378dca9d79123cff8d114ae22b5f63",
-    "frontend/vendor/micro-sdk/protocol.d.mts": "dcbebdd3d10afc24e534fe10f7905c0eb684f31673c08980cc5146b5f01b0b63",
-    "frontend/vendor/micro-sdk/protocol.mjs": "68e7f2f185315766dceb2a8c9113fc37aab1b720e11395f05b4d7202652a3fde",
-    "frontend/vendor/micro-sdk/protocol.rs": "6613cf9825e27b89ccd5fc095bee3f974c34f78103df0d43cebf7b51944c42ca",
-    "frontend/vendor/micro-sdk/schema.json": "7205dc0edccb87e69c13e0d0160bdf4f6ff662c7eb7487873139d0b5f5c9f4ce",
-    "frontend/vendor/micro-sdk/sdk.js": "3c1545da8ac535dd3a7a2fd619bcd2994977b8711a06a625fa661dda13ebb4df",
-    "frontend/vendor/micro-sdk/SOURCE.json": "8a7d6bbc79d1a7f28cd4ed163f6d095147a88932be247c70e8e05a7dd1c90ed6",
-    "frontend/vendor/micro-sdk/types.d.ts": "be11099106fcb960cfbbe29c462a600ff4e066225d9e49318607858f1875ea5b"
+    "frontend/vendor/micro-sdk/index.mjs": "48922ad23bfddc9d65b8d18b61769940b987405ab4e749a7003c86552734f067",
+    "frontend/vendor/micro-sdk/package.json": "e75e0ea4281d4e93950d1e3c17efd9d84c9a1101ee53e95e040276ade54c8a50",
+    "frontend/vendor/micro-sdk/protocol.d.mts": "970eedf16b5a477e419c1b13eb7c2546d06bba7bc479f3e5df98c50271e46c8e",
+    "frontend/vendor/micro-sdk/protocol.mjs": "3df1354c7d9e1ebb1e1fcf40d0ce0869de8843f6ef528d39368e653fc9d184e9",
+    "frontend/vendor/micro-sdk/protocol.rs": "082aae25785550ebed9461cb108c70bb6d671122ed63af6134677f6c2ba51fd8",
+    "frontend/vendor/micro-sdk/schema.json": "51d0e9a49701e3aa85dae1c3d1b83fe80f33a5b9c79f281b5ae14988cbb87dae",
+    "frontend/vendor/micro-sdk/sdk.js": "cd4143e916c4aba29cccbf1974b7b355a6aed6141a4ed45b657c37b2c94bfb71",
+    "frontend/vendor/micro-sdk/SOURCE.json": "23f6bb32eb1fef9516b62201795d4a380f0cf8e2f7217fb8ba34d2ed3c370343",
+    "frontend/vendor/micro-sdk/types.d.ts": "95230d53012f3c7d835f9307a870190f45662d973740237d42326747c07ab18d"
   },
   "layout": "frontend-backend",
-  "layoutAdaptation": "Deployment helper paths are adapted for independent frontend and backend contexts. Existing telemetry, Vue and deployment helper digests are unchanged; SDK 2.0.0 is pinned from the recorded working tree with per-file digests.",
+  "layoutAdaptation": "Deployment helper paths are adapted for independent frontend and backend contexts. Existing telemetry, Vue and deployment helper digests are unchanged; SDK 3.0.0 is pinned from the recorded working tree with per-file digests.",
   "sdkSource": {
     "sourceRepository": "saas-micro-app-sdk",
-    "sourceRevision": "7dd1b57d01ecb2e2892728031364384b5b7439a6",
+    "sourceRevision": "67031f14b522d49b3de63e0c1fc8bf7fe5fc7aa9",
     "workingTree": true,
-    "sourceDirectory": "releases/2.0.0"
+    "sourceDirectory": "releases/3.0.0"
   }
 }

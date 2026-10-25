@@ -10,7 +10,17 @@
 cargo run --locked
 ```
 
+独立迁移命令为 `cargo run --locked --bin work-orders-migrate`，导入前初始化可使用 `cargo run --locked --bin work-orders-migrate -- --import`。两种方式都只读取 `WORK_ORDERS_DATABASE_URL`，连接已创建的数据库、执行并核验原有正式迁移，然后关闭连接退出；不启动 HTTP，不要求平台或 CORS 配置，不创建数据库或角色，`--import` 不导入数据。工单没有 seed，`--seed` 会被拒绝；`--seed --import` 明确互斥，未知或重复参数也会在连接前失败。
+
+迁移命令拒绝 `PG*` 环境变量，避免驱动继承 URL 之外的端口、密码、证书或会话设置；数据库 TLS 仍通过 `WORK_ORDERS_DATABASE_URL` 的受支持参数配置。连接获取限时 5 秒，迁移限时 5 分钟，关闭连接限时 10 秒。先停用业务进程，由导入流程保持独占；该命令不提供数据导入互斥锁。默认 `cargo run --locked` 仍启动 `work-orders-api`。
+
+迁移命令不读取默认 pgpass 文件。新库 owner 使用 `NOLOGIN` 时，可由本机 postgres peer 会话通过 URL 显式指定 owner，例如 `postgresql://postgres@localhost:5432/new_work_orders_db?host=/run/postgresql&options[role]=new_work_orders_owner`。`host` 必须是规范绝对 Unix socket 目录，`options[role]` 仅接受 1–63 字节的小写字母、数字、下划线标识符且不能以数字开头；该委托形式要求 `postgres@localhost`、无密码并显式给出 socket。其他启动 options、未知或重复 URL 参数均拒绝。正常 API 的 URL 参数合同不变。
+
 程序只读进程环境，不自动加载 `.env`、`config.rust.env.example` 或 Compose 的 env 文件。`WORK_ORDERS_DATABASE_URL` 是唯一数据库入口，不回退到平台的 `DATABASE_URL`。`WORK_ORDERS_ALLOWED_ORIGINS` 必须显式配置准确的宿主来源。运行受保护 HTTP 应用还需要完整的 `PLATFORM_API_ORIGIN`、`PLATFORM_CLIENT_ID`、`PLATFORM_CLIENT_SECRET`；数据库工具可单独构造无平台客户端配置，但这不代表正式 API 支持匿名业务请求。
+
+正常 API 的 `WORK_ORDERS_DATABASE_INIT_MODE` 缺省或为 `seed` 时保留现有正式初始化行为。`import` 会在连接前拒绝启动，须使用独立迁移命令。已经完成受信离线导入的目标可使用 `imported`：必须同时提供 `WORK_ORDERS_EXPECTED_DATABASE`、`WORK_ORDERS_IMPORT_MARKER`、`WORK_ORDERS_EXPECTED_SCHEMA_SHA256`，其他模式携带其中任一项均拒绝。标记必须精确为 `saas-uuid-import/1/<规范小写 UUIDv7 RFC batch UUID>/<64位小写十六进制摘要>`，schema SHA256 必须来自同批认证导入证明中的完整有序 `schema_material` JSON，而不是自行对当前库重新签认。
+
+`imported` 先核对 URL 解码后的库名，再以同一只读 Repeatable Read 事务核对实际库名、数据库 COMMENT、完整 catalog SHA256、正式迁移历史与 readiness 约束。运行账号必须是 URL 明确指定的 LOGIN、非高权角色，不能拥有库或用户 schema/对象，不能继承或切换到 owner/高权角色，也不能通过任何可切换角色获得库或 schema CREATE 或数据库 TEMPORARY。校验通过才启动 HTTP，整个分支不执行迁移或 seed；平台客户端和 CORS 等正常 HTTP 配置仍然必需。该模式只验证已完成的导入，不执行导入或数据库授权修改。
 
 配置字段与默认值由 `src/config.rs` 定义，[config.rust.env.example](config.rust.env.example)提供参考。qiankun 的 API 请求来自真实平台页面 origin，配置不得使用 `null`、通配符、带路径或尾斜杠的 URL；缺失/空值会在配置加载时失败。`NODE_ENV=production` 是 Rust 继续兼容的环境开关，要求平台与准确来源使用 HTTPS；服务本身不需要 Node 运行时。
 
@@ -40,6 +50,8 @@ cargo run --locked
 上游 HTTP 禁止重定向、环境代理和隐式请求重试，单次 JSON 最大 256 KiB。成员校验在释放业务连接后进行，随后用短事务复核并提交；提醒先持久化不可变事件并释放锁，再发布平台通知。[API 契约](API.md)记录并发、成员有效期和未知结果恢复要求。
 
 启动会验证实际 schema、历史 Node SHA-256 迁移记录和 SQLx 迁移历史。兼容既有合法工单库，拒绝不支持的对象、历史缺口或 checksum/schema 漂移。`migrations/0001_work_orders.sql`、`0002_create_idempotency.sql`、`0003_reminder_intents.sql` 是不可变增量，不能为了启动旧程序删除记录或篡改已执行 SQL。
+
+新增 `0004_uuid_v7.sql` 为全部 17 个 UUID 列追加 version 7／RFC variant 约束，兼容 PostgreSQL 17，Node 与 Rust 迁移锁及 checksum 合同共同扩展到第 4 版。应用显式生成 v7；Path、DTO、目录、提醒和过滤条件中的 typed ID 拒绝 v4、nil 与错误 variant，非法筛选不退化成无筛选。已有非 v7 业务数据会使新迁移原子失败，应先按平台 UUID 专项重编号并导入全新目标，再启动本版本，保留源库和原迁移记录。
 
 ## 代码与验证
 

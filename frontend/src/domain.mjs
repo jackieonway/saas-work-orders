@@ -1,3 +1,5 @@
+import { validUUID } from './uuid.mjs'
+
 export const APP_CODE = 'work-orders'
 export const MAX_BYTES = 4 * 1024 * 1024
 export const validIdempotencyKey = value => typeof value === 'string' && /^[A-Za-z0-9._:-]{1,128}$/.test(value)
@@ -15,10 +17,10 @@ export function validContext(props, now = Date.now()) {
     Number.isSafeInteger(props.contextEpoch) && props.contextEpoch > 0 && !!props.contextVersion &&
     typeof props.token === 'string' && !!props.token && !!props.signal && !props.signal.aborted &&
     Date.parse(props.expiresAt) > now && Date.parse(props.tokenExpiresAt) > now &&
-    !!props.user?.id && !!props.tenant?.id && !!props.organization?.id &&
+    validUUID(props.user?.id) && validUUID(props.tenant?.id) && validUUID(props.organization?.id) &&
     Array.isArray(props.permissions) && Array.isArray(props.dataGrants) &&
     (props.organizationScopeIds == null || (Array.isArray(props.organizationScopeIds) &&
-      props.organizationScopeIds.length <= 10000 && props.organizationScopeIds.every((value) => typeof value === 'string' && !!value) &&
+      props.organizationScopeIds.length <= 10000 && props.organizationScopeIds.every(validUUID) &&
       props.organizationScopeIds.includes(props.organization.id)))
 }
 
@@ -30,7 +32,8 @@ export function sameIdentity(left, right) {
 export function grants(props, resource, action) {
   if (!validContext(props) || !props.permissions.includes(resource + ':' + action)) return []
   return props.dataGrants.filter((grant) => grant.resource === resource && grant.action === action &&
-    grant.subjectUserId === props.user.id && grant.tenantId === props.tenant.id && Object.hasOwn(SCOPE_LABELS, grant.scope))
+    grant.subjectUserId === props.user.id && grant.tenantId === props.tenant.id && Object.hasOwn(SCOPE_LABELS, grant.scope) &&
+    Array.isArray(grant.organizationIds) && grant.organizationIds.every(validUUID))
 }
 
 function withinOrganizationCeiling(props, organizationId) {
@@ -49,6 +52,8 @@ function organizationAllowed(grant, organizationId, props) {
 export function canTicket(props, action, ticket) {
   const available = grants(props, 'ticket', action)
   if (!ticket) return available.length > 0
+  if (!['id', 'tenantId', 'organizationId', 'ownerUserId'].every(field => validUUID(ticket[field])) ||
+      ticket.assigneeUserId != null && !validUUID(ticket.assigneeUserId)) return false
   if (!available.length || ticket.tenantId !== props?.tenant.id || !withinOrganizationCeiling(props, ticket.organizationId)) return false
   return available.some((grant) => grant.scope === 'SELF' ? ticket.ownerUserId === props.user.id &&
     Array.isArray(grant.organizationIds) && (grant.organizationIds.length === 0 || grant.organizationIds.includes(ticket.organizationId))

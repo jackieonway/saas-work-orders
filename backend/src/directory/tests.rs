@@ -1,11 +1,11 @@
 use super::*;
 
 fn organization() -> Uuid {
-    Uuid::from_u128(1)
+    crate::uuid_v7::fixture(1)
 }
 
 fn member_value() -> Value {
-    serde_json::json!({ "id": Uuid::from_u128(2).to_string(), "organizationId": organization().to_string(), "displayName": "成员 😀" })
+    serde_json::json!({ "id": crate::uuid_v7::fixture(2).to_string(), "organizationId": organization().to_string(), "displayName": "成员 😀" })
 }
 
 #[test]
@@ -15,7 +15,7 @@ fn platform_list_is_projected_to_minimal_normalized_business_members() {
         .expect("serialize");
     assert_eq!(
         mapped,
-        serde_json::json!({ "records": [{ "userId": Uuid::from_u128(2).to_string(), "organizationId": organization().to_string(), "displayName": "成员 😀" }], "total": 1, "page": 1, "size": 20 })
+        serde_json::json!({ "records": [{ "userId": crate::uuid_v7::fixture(2).to_string(), "organizationId": organization().to_string(), "displayName": "成员 😀" }], "total": 1, "page": 1, "size": 20 })
     );
 }
 
@@ -25,7 +25,7 @@ fn malformed_or_wrong_target_member_data_fails_closed() {
         ("id", serde_json::json!("not-a-uuid")),
         (
             "organizationId",
-            serde_json::json!(Uuid::from_u128(3).to_string()),
+            serde_json::json!(crate::uuid_v7::fixture(3).to_string()),
         ),
         ("displayName", serde_json::json!(null)),
         ("displayName", serde_json::json!("\u{feff} \t")),
@@ -71,11 +71,11 @@ fn member_witness_binds_every_identity_action_and_target_without_renewing_ttl() 
     let start = Instant::now();
     let deadline = start + std::time::Duration::from_secs(3);
     let member = VerifiedMember {
-        actor: Uuid::from_u128(1),
-        tenant: Uuid::from_u128(2),
-        current_organization: Uuid::from_u128(3),
-        organization: Uuid::from_u128(4),
-        user: Uuid::from_u128(5),
+        actor: crate::uuid_v7::fixture(1),
+        tenant: crate::uuid_v7::fixture(2),
+        current_organization: crate::uuid_v7::fixture(3),
+        organization: crate::uuid_v7::fixture(4),
+        user: crate::uuid_v7::fixture(5),
         action: Action::Update,
         display_name: "verified".into(),
         deadline,
@@ -88,7 +88,7 @@ fn member_witness_binds_every_identity_action_and_target_without_renewing_ttl() 
         member.user,
     );
     assert!(member.matches(actor, tenant, context, org, user, Action::Update));
-    let other = Uuid::from_u128(99);
+    let other = crate::uuid_v7::fixture(99);
     for (actor, tenant, context, org, user, action) in [
         (other, tenant, context, org, user, Action::Update),
         (actor, other, context, org, user, Action::Update),

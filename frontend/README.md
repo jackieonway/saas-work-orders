@@ -1,6 +1,6 @@
 # 工单前端
 
-本工程使用 Vue 3.5.43、Vite 8.3.4 和平台 SDK 2.0.0，向 qiankun 提供 HTML + classic UMD 微应用。`src/qiankun-entry.mjs` 是唯一正式构建入口，`src/app.mjs` 实现工单页面，`src/client.mjs` 负责带当前应用上下文的业务请求，`src/intents.mjs` 保存当前应用存续期间的写入恢复信息。
+本工程使用 Vue 3.5.43、Vite 8.3.4 和平台 SDK 3.0.0，向 qiankun 提供 HTML + classic UMD 微应用。`src/qiankun-entry.mjs` 是唯一正式构建入口，`src/app.mjs` 实现工单页面，`src/client.mjs` 负责带当前应用上下文的业务请求，`src/intents.mjs` 保存当前应用存续期间的写入恢复信息。
 
 ## 安装与开发
 
@@ -58,7 +58,7 @@ npm run preview
 
 构建只向浏览器写入版本、宿主来源白名单和 API 地址，关闭任意 `VITE_*` 注入，默认版本取自 package.json 的 2.0.1。`dist/` 包含 HTML、单个 `assets/micro-app.umd.js`、合并 CSS、Vue 许可证、`asset-manifest.json`、`build-info.json` 与 `release-files.json`。构建信息记录 qiankun、契约 2.0、SDK 版本、源码和锁文件摘要；不产生动态 JS 分块。UMD 初始化结束后重新声明生命周期对象，供 qiankun 正确发现导出。
 
-每次构建后自动门禁检查实际产物：核对四个 UMD 生命周期、SDK 2.0.0、HTML/CSS 与资源清单、版本/公开配置、源码与逐文件摘要，并拒绝旧 iframe/ESM/SDK 1 产物、缺失/变更资源或陈旧构建。`release:check` 可显式复核指定目录，CI 同时执行。门禁执行 VM 时禁止网络访问，只做本仓可信代码的格式与生命周期验收，不作为运行任意第三方代码的安全沙箱。
+每次构建后自动门禁检查实际产物：核对四个 UMD 生命周期、SDK 3.0.0、HTML/CSS 与资源清单、版本/公开配置、源码与逐文件摘要，并拒绝旧 iframe/ESM/SDK 1 产物、缺失/变更资源或陈旧构建。`release:check` 可显式复核指定目录，CI 同时执行。门禁执行 VM 时禁止网络访问，只做本仓可信代码的格式与生命周期验收，不作为运行任意第三方代码的安全沙箱。
 
 当前已生成 `2.0.1-qiankun` 本地候选，可用 `npm run release:check -- deploy/micro-apps/work-orders/versions/2.0.1-qiankun/html` 复核。需要生成下一份候选时，按部署指南给 `release:candidate` 选择未使用的新版本；工具在 `deploy/micro-apps/work-orders/versions/` 中只新增目录，拒绝覆盖。旧 `2.0.0-qiankun` 和原 `dist/` 保留，生产 HTTPS 构建与本地候选的区别见部署指南。
 

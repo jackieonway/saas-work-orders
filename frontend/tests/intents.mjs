@@ -5,15 +5,15 @@ import { IntentStore, identityKey } from '../src/intents.mjs'
 const context = (extra = {}) => ({ contractVersion: '2.0', appCode: 'work-orders', basePath: '/micro/work-orders',
   contextVersion: 'one', contextEpoch: 1, token: 'must-not-be-stored', expiresAt: new Date(Date.now() + 60_000).toISOString(),
   tokenExpiresAt: new Date(Date.now() + 60_000).toISOString(), signal: new AbortController().signal,
-  tenant: { id: 'tenant' }, organization: { id: 'organization' }, user: { id: 'user' },
+  tenant: { id: '0199fe00-0000-7000-8000-000000000102' }, organization: { id: '0199fe00-0000-7000-8000-000000000103' }, user: { id: '0199fe00-0000-7000-8000-000000000101' },
   permissions: ['ticket:create'], dataGrants: [], ...extra })
-const store = () => new IntentStore({ randomUUID: () => '12345678-1234-1234-1234-123456789abc' })
+const store = () => new IntentStore({ id: () => '0199fe00-0000-7000-8000-000000000105' })
 
 test('creation captures immutable exact DTO and key before transport, and retains both until explicit settlement', () => {
   const vault = store(), props = context(), body = { title: ' Original ', description: 'details', priority: 'HIGH', assigneeUserId: null }
   const intent = vault.prepareCreate(props, body)
   body.title = 'changed after dispatch'
-  assert.equal(intent.key, 'create:12345678-1234-1234-1234-123456789abc')
+  assert.equal(intent.key, 'create:0199fe00-0000-7000-8000-000000000105')
   assert.deepEqual(intent.body, { title: ' Original ', description: 'details', priority: 'HIGH', assigneeUserId: null })
   assert.ok(Object.isFrozen(intent)); assert.ok(Object.isFrozen(intent.body))
   assert.equal(vault.prepareCreate(props, { title: 'different event' }), intent)
@@ -27,7 +27,7 @@ test('intent vault isolates app, tenant, organization and user while normal rene
   const vault = store(), props = context(), original = vault.prepareCreate(props, { title: 'original' })
   const renewed = { ...props, contextEpoch: 2, contextVersion: 'two', token: 'renewed', signal: new AbortController().signal }
   assert.equal(identityKey(props), identityKey(renewed)); assert.equal(vault.getCreate(renewed), original)
-  for (const changed of [{ tenant: { id: 'other' } }, { organization: { id: 'other' } }, { user: { id: 'other' } }]) {
+  for (const changed of [{ tenant: { id: '0199fe00-0000-7000-8000-000000000104' } }, { organization: { id: '0199fe00-0000-7000-8000-000000000104' } }, { user: { id: '0199fe00-0000-7000-8000-000000000104' } }]) {
     const next = { ...renewed, ...changed }
     assert.equal(vault.getCreate(next), null)
     assert.equal(vault.settleCreate(next, original), false)
@@ -40,14 +40,14 @@ test('intent vault isolates app, tenant, organization and user while normal rene
 
 test('reminders retain independent per-ticket immutable events and never include recipient or credentials', () => {
   let sequence = 0
-  const vault = new IntentStore({ randomUUID: () => 'event-' + ++sequence }), props = context()
-  const one = vault.prepareReminder(props, 'ticket-a'), two = vault.prepareReminder(props, 'ticket-b')
+  const vault = new IntentStore({ id: () => 'event-' + ++sequence }), props = context()
+  const one = vault.prepareReminder(props, '0199fe00-0000-7000-8000-000000000009'), two = vault.prepareReminder(props, '0199fe00-0000-7000-8000-000000000010')
   assert.notEqual(one.key, two.key)
-  assert.deepEqual(one, { kind: 'reminder', key: 'reminder:event-1', ticketId: 'ticket-a', body: { idempotencyKey: 'reminder:event-1' } })
-  assert.ok(Object.isFrozen(one.body)); assert.equal(vault.prepareReminder(props, 'ticket-a'), one)
+  assert.deepEqual(one, { kind: 'reminder', key: 'reminder:event-1', ticketId: '0199fe00-0000-7000-8000-000000000009', body: { idempotencyKey: 'reminder:event-1' } })
+  assert.ok(Object.isFrozen(one.body)); assert.equal(vault.prepareReminder(props, '0199fe00-0000-7000-8000-000000000009'), one)
   assert.equal(vault.settleReminder({ ...props, user: { id: 'another' } }, one), false)
   assert.equal(vault.settleReminder(props, one), true)
-  assert.equal(vault.getReminder(props, 'ticket-a'), null); assert.equal(vault.getReminder(props, 'ticket-b'), two)
+  assert.equal(vault.getReminder(props, '0199fe00-0000-7000-8000-000000000009'), null); assert.equal(vault.getReminder(props, '0199fe00-0000-7000-8000-000000000010'), two)
 })
 
 test('invalid contexts and DTOs cannot create pending events or leak arbitrary fields into the vault', () => {

@@ -9,6 +9,7 @@ use work_orders_api::initialize_database;
 const SQL: &str = include_str!("../migrations/0001_work_orders.sql");
 const IDEMPOTENCY_SQL: &str = include_str!("../migrations/0002_create_idempotency.sql");
 const REMINDER_SQL: &str = include_str!("../migrations/0003_reminder_intents.sql");
+const UUID_V7_SQL: &str = include_str!("../migrations/0004_uuid_v7.sql");
 const LEGACY: &str = "CREATE TABLE work_order_migrations(version TEXT PRIMARY KEY,checksum CHAR(64) NOT NULL,applied_at TIMESTAMPTZ NOT NULL DEFAULT now())";
 
 #[derive(Clone)]
@@ -65,7 +66,7 @@ where
         .connect(&raw)
         .await
         .expect("owned admin connection");
-    let name = format!("work_orders_phase16_{}", Uuid::new_v4().simple());
+    let name = format!("work_orders_phase16_{}", Uuid::now_v7().simple());
     sqlx::query(&format!("CREATE DATABASE \"{name}\""))
         .execute(&admin)
         .await
@@ -88,8 +89,8 @@ where
     let result = tokio::spawn(case(Fixture {
         pool: pool.clone(),
         database_url: url.to_string(),
-        tenant: Uuid::new_v4(),
-        ticket: Uuid::new_v4(),
+        tenant: Uuid::now_v7(),
+        ticket: Uuid::now_v7(),
     }))
     .await;
     pool.close().await;
@@ -180,7 +181,7 @@ async fn reminder_intent(f: &Fixture) -> String {
         "link":format!("/micro/work-orders/tickets/{}",f.ticket),
     }).to_string();
     sqlx::query("INSERT INTO work_order_reminder_intents(tenant_id,organization_id,application_id,user_id,idempotency_key,ticket_id,target_organization_id,recipient_user_id,request_hash,request_json) VALUES($1,$2,$3,$4,'preserved-reminder',$5,$2,$4,$6,$7)")
-        .bind(f.tenant).bind(organization).bind(Uuid::new_v4()).bind(user).bind(f.ticket)
+        .bind(f.tenant).bind(organization).bind(Uuid::now_v7()).bind(user).bind(f.ticket)
         .bind(format!("{:x}",Sha256::digest(payload.as_bytes()))).bind(payload)
         .execute(&f.pool).await.expect("existing immutable reminder intent");
     sqlx::query_scalar("SELECT row_to_json(t)::text FROM work_order_reminder_intents t")
@@ -217,7 +218,7 @@ async fn node_migrate(f: &Fixture) {
 
 async fn receipt(f: &Fixture) -> String {
     sqlx::query("INSERT INTO work_order_create_idempotency(tenant_id,organization_id,user_id,action,idempotency_key,request_hash,ticket_id,response_json) VALUES($1,$2,$3,'create','preserved-key',repeat('a',64),$4,'{\"id\":\"historical-result\"}')")
-        .bind(f.tenant).bind(Uuid::new_v4()).bind(Uuid::new_v4()).bind(f.ticket)
+        .bind(f.tenant).bind(Uuid::now_v7()).bind(Uuid::now_v7()).bind(f.ticket)
         .execute(&f.pool).await.expect("existing completed receipt");
     sqlx::query_scalar("SELECT row_to_json(t)::text FROM work_order_create_idempotency t")
         .fetch_one(&f.pool)
@@ -226,8 +227,8 @@ async fn receipt(f: &Fixture) -> String {
 }
 
 async fn assert_current(f: &Fixture) {
-    assert_eq!(journal(f, false).await.len(), 3);
-    assert_eq!(journal(f, true).await.len(), 3);
+    assert_eq!(journal(f, false).await.len(), 4);
+    assert_eq!(journal(f, true).await.len(), 4);
     let checksum: String = sqlx::query_scalar(
         "SELECT checksum FROM work_order_migrations WHERE version='0001_work_orders.sql'",
     )
@@ -265,6 +266,82 @@ async fn assert_current(f: &Fixture) {
     .await
     .expect("temporary reference cleanup");
     assert_eq!(references, 0);
+    let checksum: String = sqlx::query_scalar(
+        "SELECT checksum FROM work_order_migrations WHERE version='0004_uuid_v7.sql'",
+    )
+    .fetch_one(&f.pool)
+    .await
+    .expect("UUID policy checksum");
+    assert_eq!(
+        checksum,
+        format!("{:x}", Sha256::digest(UUID_V7_SQL.as_bytes()))
+    );
+}
+
+#[tokio::test]
+#[ignore = "requires owned CI PostgreSQL"]
+async fn legacy_v4_source_is_rejected_without_history_or_data_rewrite() {
+    owned(|f| async move {
+        legacy(&f).await;
+        // Intentionally old v4 data: this source needs offline identity remapping.
+        let old = Uuid::parse_str("01900000-0000-4000-8000-000000000001").unwrap();
+        sqlx::query("INSERT INTO work_order_counters(tenant_id,next_number) VALUES($1,42)")
+            .bind(old)
+            .execute(&f.pool)
+            .await
+            .unwrap();
+        let history = journal(&f, false).await;
+        assert!(initialize_database(&f.pool).await.is_err());
+        assert_eq!(journal(&f, false).await, history);
+        no_sqlx(&f).await;
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>(
+                "SELECT next_number FROM work_order_counters WHERE tenant_id=$1"
+            )
+            .bind(old)
+            .fetch_one(&f.pool)
+            .await
+            .unwrap(),
+            42
+        );
+    })
+    .await;
+}
+
+#[tokio::test]
+#[ignore = "requires owned CI PostgreSQL"]
+async fn uuid_v7_guards_cover_every_typed_column_and_nullable_reference() {
+    owned(|f| async move {
+        initialize_database(&f.pool).await.unwrap();
+        let guarded: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM pg_constraint c JOIN pg_class t ON t.oid=c.conrelid JOIN pg_namespace n ON n.oid=t.relnamespace WHERE n.nspname='public' AND c.contype='c' AND c.convalidated AND right(c.conname,8)='_uuid_v7'",
+        ).fetch_one(&f.pool).await.unwrap();
+        assert_eq!(guarded, 17);
+        // Every direct UUID field is checked, including platform-owned soft references.
+        let columns = ["id", "tenant_id", "organization_id", "owner_user_id", "assignee_user_id"];
+        for column in columns {
+            for bad in [
+                // Kept deliberately as rejection fixtures.
+                "01900000-0000-4000-8000-000000000001",
+                "01900000-0000-7000-c000-000000000001",
+                "00000000-0000-0000-0000-000000000000",
+            ] {
+                let id = Uuid::now_v7();
+                let sql = "INSERT INTO work_orders(id,number,tenant_id,organization_id,organization_name,owner_user_id,owner_display_name,assignee_user_id,assignee_display_name,title) VALUES($1,$2,$3,$4,'Org',$5,'Owner',$6,'Assignee','Guard')";
+                let mut values = [id, f.tenant, Uuid::now_v7(), Uuid::now_v7(), Uuid::now_v7()];
+                values[columns.iter().position(|name| *name==column).unwrap()] = Uuid::parse_str(bad).unwrap();
+                assert!(sqlx::query(sql).bind(values[0]).bind(format!("guard-{id}"))
+                    .bind(values[1]).bind(values[2]).bind(values[3]).bind(values[4])
+                    .execute(&f.pool).await.is_err(), "{column} accepted invalid UUID policy");
+            }
+        }
+        seed(&f).await;
+        let (version, variant): (i32,i32) = sqlx::query_as(
+            "SELECT get_byte(uuid_send(id),6)>>4,get_byte(uuid_send(id),8)&192 FROM work_orders WHERE id=$1"
+        ).bind(f.ticket).fetch_one(&f.pool).await.unwrap();
+        assert_eq!((version,variant),(7,128));
+        assert_current(&f).await;
+    }).await;
 }
 
 async fn seed(f: &Fixture) {
@@ -274,7 +351,7 @@ async fn seed(f: &Fixture) {
         .await
         .expect("legacy counter");
     sqlx::query("INSERT INTO work_orders(id,number,tenant_id,organization_id,organization_name,owner_user_id,owner_display_name,title,description,version,created_at,updated_at) VALUES($1,'WO-000041',$2,$3,'Legacy organization',$4,'Legacy owner','Historical ticket','preserve me',7,'2025-01-02T03:04:05Z','2025-02-03T04:05:06Z')")
-        .bind(f.ticket).bind(f.tenant).bind(Uuid::new_v4()).bind(Uuid::new_v4()).execute(&f.pool).await.expect("legacy ticket");
+        .bind(f.ticket).bind(f.tenant).bind(Uuid::now_v7()).bind(Uuid::now_v7()).execute(&f.pool).await.expect("legacy ticket");
 }
 
 async fn data(f: &Fixture) -> (String, i64) {
@@ -349,13 +426,13 @@ async fn empty_first_start_and_repeat() {
         .fetch_one(&f.pool)
         .await
         .expect("SQLx SHA384 metadata");
-        assert_eq!(entries, 3);
+        assert_eq!(entries, 4);
         assert_eq!(
             sqlx::query_scalar::<_, i64>("SELECT count(*) FROM work_order_migrations")
                 .fetch_one(&f.pool)
                 .await
                 .expect("compat ledger"),
-            3
+            4
         );
     })
     .await;
@@ -388,7 +465,7 @@ async fn concurrent_fresh_start() {
                 .fetch_one(&f.pool)
                 .await
                 .expect("single migration"),
-            3
+            4
         );
     })
     .await;
@@ -531,7 +608,7 @@ async fn migration_failure_rolls_back_and_can_retry() {
         // then confirm the successfully-created auxiliary database is absent.
         let raw = std::env::var("TEST_DATABASE_URL").expect("owned admin URL");
         let admin = PgPoolOptions::new().max_connections(1).connect(&raw).await.expect("owned setup regression admin");
-        let name = format!("work_orders_phase16_{}", Uuid::new_v4().simple());
+        let name = format!("work_orders_phase16_{}", Uuid::now_v7().simple());
         sqlx::query(&format!("CREATE DATABASE \"{name}\"")).execute(&admin).await.expect("create owned setup regression database");
         let mut url = url::Url::parse(&raw).expect("owned URL");
         url.set_path(&format!("/{name}"));
@@ -743,8 +820,8 @@ async fn concurrent_v1_upgrade_preserves_receipt_constraints() {
         assert!(a.is_ok() && b.is_ok());
         assert_current(&f).await;
         assert_eq!(data(&f).await,before);
-        let organization = Uuid::new_v4();
-        let user = Uuid::new_v4();
+        let organization = Uuid::now_v7();
+        let user = Uuid::now_v7();
         let insert = "INSERT INTO work_order_create_idempotency(tenant_id,organization_id,user_id,action,idempotency_key,request_hash,ticket_id,response_json) VALUES($1,$2,$3,$4,$5,$6,$7,$8)";
         let mut transaction = f.pool.begin().await.unwrap();
         sqlx::query(insert).bind(f.tenant).bind(organization).bind(user).bind("create").bind("pending").bind("a".repeat(64)).bind(None::<Uuid>).bind(None::<String>)
@@ -761,11 +838,11 @@ async fn concurrent_v1_upgrade_preserves_receipt_constraints() {
             ("create","key".into(),"A".repeat(64),None,None),
             ("create","key".into(),"a".repeat(64),Some(f.ticket),None),
             ("create","key".into(),"a".repeat(64),None,Some("{}")),
-            ("create","key".into(),"a".repeat(64),Some(Uuid::new_v4()),Some("{}")),
+            ("create","key".into(),"a".repeat(64),Some(Uuid::now_v7()),Some("{}")),
         ] {
             assert!(sqlx::query(insert).bind(f.tenant).bind(organization).bind(user).bind(action).bind(key).bind(hash).bind(ticket).bind(response).execute(&f.pool).await.is_err());
         }
-        for current_user in [user,Uuid::new_v4()] {
+        for current_user in [user,Uuid::now_v7()] {
             sqlx::query(insert).bind(f.tenant).bind(organization).bind(current_user).bind("create").bind("valid._:-key").bind("a".repeat(64)).bind(f.ticket).bind("{\"version\":1}")
                 .execute(&f.pool).await.expect("same key in separate user domain");
         }
@@ -840,7 +917,7 @@ async fn node_v3_and_mixed_sqlx_prefixes_preserve_reminder_intents() {
             };
             node_migrate(&f).await;
             let legacy_before = journal(&f, false).await;
-            assert_eq!(legacy_before.len(), 3);
+            assert_eq!(legacy_before.len(), 4);
             let receipt_before = receipt(&f).await;
             let intent_before = reminder_intent(&f).await;
             let expected = if sqlx_prefix == 0 {
@@ -885,16 +962,16 @@ async fn reminder_intents_are_immutable_and_application_domain_scoped() {
         let before = data(&f).await;
         let intent_before = reminder_intent(&f).await;
         for statement in [
-            "UPDATE work_order_reminder_intents SET recipient_user_id=gen_random_uuid()",
-            "UPDATE work_order_reminder_intents SET request_json=request_json",
-            "DELETE FROM work_order_reminder_intents",
-            "INSERT INTO work_order_reminder_intents SELECT tenant_id,organization_id,application_id,user_id,idempotency_key,gen_random_uuid(),target_organization_id,recipient_user_id,request_hash,request_json,created_at FROM work_order_reminder_intents",
+            format!("UPDATE work_order_reminder_intents SET recipient_user_id='{}'::uuid", Uuid::now_v7()),
+            "UPDATE work_order_reminder_intents SET request_json=request_json".to_owned(),
+            "DELETE FROM work_order_reminder_intents".to_owned(),
+            format!("INSERT INTO work_order_reminder_intents SELECT tenant_id,organization_id,application_id,user_id,idempotency_key,'{}'::uuid,target_organization_id,recipient_user_id,request_hash,request_json,created_at FROM work_order_reminder_intents", Uuid::now_v7()),
         ] {
-            assert!(f.pool.execute(statement).await.is_err(), "an existing event cannot be redirected or recycled");
+            assert!(f.pool.execute(statement.as_str()).await.is_err(), "an existing event cannot be redirected or recycled");
         }
         assert_eq!(sqlx::query_scalar::<_, String>("SELECT row_to_json(t)::text FROM work_order_reminder_intents t").fetch_one(&f.pool).await.unwrap(), intent_before);
-        f.pool.execute("INSERT INTO work_order_reminder_intents SELECT tenant_id,organization_id,gen_random_uuid(),user_id,idempotency_key,ticket_id,target_organization_id,recipient_user_id,request_hash,request_json,created_at FROM work_order_reminder_intents")
-            .await.expect("a distinct trusted application is a distinct platform domain");
+        sqlx::query("INSERT INTO work_order_reminder_intents SELECT tenant_id,organization_id,$1,user_id,idempotency_key,ticket_id,target_organization_id,recipient_user_id,request_hash,request_json,created_at FROM work_order_reminder_intents")
+            .bind(Uuid::now_v7()).execute(&f.pool).await.expect("a distinct trusted application is a distinct platform domain");
         assert_eq!(sqlx::query_scalar::<_, i64>("SELECT count(*) FROM work_order_reminder_intents").fetch_one(&f.pool).await.unwrap(), 2);
         assert!(initialize_database(&f.pool).await.is_ok());
         assert_eq!(data(&f).await, before);
@@ -909,8 +986,8 @@ async fn reminder_history_and_catalog_drift_is_rejected_without_repair() {
         "DELETE FROM work_order_migrations WHERE version='0003_reminder_intents.sql'",
         "UPDATE _sqlx_migrations SET checksum=decode(repeat('00',48),'hex') WHERE version=3",
         "UPDATE _sqlx_migrations SET success=false WHERE version=3",
-        "INSERT INTO work_order_migrations(version,checksum) VALUES('0004_unknown.sql',repeat('0',64))",
-        "INSERT INTO _sqlx_migrations(version,description,success,checksum,execution_time) VALUES(4,'unknown',true,decode(repeat('00',48),'hex'),0)",
+        "INSERT INTO work_order_migrations(version,checksum) VALUES('0005_unknown.sql',repeat('0',64))",
+        "INSERT INTO _sqlx_migrations(version,description,success,checksum,execution_time) VALUES(5,'unknown',true,decode(repeat('00',48),'hex'),0)",
         "DROP TABLE work_order_reminder_intents",
         "ALTER TABLE work_order_reminder_intents DROP CONSTRAINT work_order_reminder_intents_pkey",
         "ALTER TABLE work_order_reminder_intents ADD COLUMN unexpected text",

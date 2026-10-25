@@ -1,14 +1,14 @@
-/* Generated SaaS Micro SDK 2.0.0; source: examples/micro-app-sdk/release.json */
+/* Generated SaaS Micro SDK 3.0.0; source: examples/micro-app-sdk/release.json */
 
 // canonical-sdk:sdk-protocol
-var SDK_VERSION = "2.0.0";
+var SDK_VERSION = "3.0.0";
 var CONTEXT_CONTRACT_VERSION = "1.0";
 var MICRO_PROPS_CONTRACT_VERSION = "2.0";
 var NOTIFICATION_CONTRACT_VERSION = "1.0";
 var DEFAULT_MAX_JSON_RESPONSE_BYTES = 1048576;
 var MAX_HTTP_RESPONSE_BYTES = 4194304;
 var MAX_ORGANIZATION_SCOPE_IDS = 1e4;
-var SUPPORTED_SDK_VERSIONS = Object.freeze(["2.0.0"]);
+var SUPPORTED_SDK_VERSIONS = Object.freeze(["3.0.0"]);
 function isSupportedSdkVersion(value) {
   return typeof value === "string" && SUPPORTED_SDK_VERSIONS.includes(value);
 }
@@ -18,6 +18,112 @@ function assertSupportedSdkVersion(value) {
     error.code = "UNSUPPORTED_SDK_VERSION";
     throw error;
   }
+}
+
+// D:/WorkSpace/rust/rust-saas/saas-micro-app-sdk/node_modules/uuid/dist/stringify.js
+var byteToHex = [];
+for (let i = 0; i < 256; ++i) {
+  byteToHex.push((i + 256).toString(16).slice(1));
+}
+function unsafeStringify(arr, offset = 0) {
+  return (byteToHex[arr[offset + 0]] + byteToHex[arr[offset + 1]] + byteToHex[arr[offset + 2]] + byteToHex[arr[offset + 3]] + "-" + byteToHex[arr[offset + 4]] + byteToHex[arr[offset + 5]] + "-" + byteToHex[arr[offset + 6]] + byteToHex[arr[offset + 7]] + "-" + byteToHex[arr[offset + 8]] + byteToHex[arr[offset + 9]] + "-" + byteToHex[arr[offset + 10]] + byteToHex[arr[offset + 11]] + byteToHex[arr[offset + 12]] + byteToHex[arr[offset + 13]] + byteToHex[arr[offset + 14]] + byteToHex[arr[offset + 15]]).toLowerCase();
+}
+
+// D:/WorkSpace/rust/rust-saas/saas-micro-app-sdk/node_modules/uuid/dist/rng.js
+var getRandomValues;
+var rnds8 = new Uint8Array(16);
+function rng() {
+  if (!getRandomValues) {
+    if (typeof crypto === "undefined" || !crypto.getRandomValues) {
+      throw new Error("crypto.getRandomValues() not supported. See https://github.com/uuidjs/uuid#getrandomvalues-not-supported");
+    }
+    getRandomValues = crypto.getRandomValues.bind(crypto);
+  }
+  return getRandomValues(rnds8);
+}
+
+// D:/WorkSpace/rust/rust-saas/saas-micro-app-sdk/node_modules/uuid/dist/v7.js
+var _state = {};
+function v7(options, buf, offset) {
+  let bytes;
+  if (options) {
+    bytes = v7Bytes(options.random ?? options.rng?.() ?? rng(), options.msecs, options.seq, buf, offset);
+  } else {
+    const now = Date.now();
+    const rnds = rng();
+    updateV7State(_state, now, rnds);
+    bytes = v7Bytes(rnds, _state.msecs, _state.seq, buf, offset);
+  }
+  return buf ?? unsafeStringify(bytes);
+}
+function updateV7State(state, now, rnds) {
+  state.msecs ??= -Infinity;
+  state.seq ??= 0;
+  if (now > state.msecs) {
+    state.seq = rnds[6] << 23 | rnds[7] << 16 | rnds[8] << 8 | rnds[9];
+    state.msecs = now;
+  } else {
+    state.seq = state.seq + 1 | 0;
+    if (state.seq === 0) {
+      state.msecs++;
+    }
+  }
+  return state;
+}
+function v7Bytes(rnds, msecs, seq, buf, offset = 0) {
+  if (rnds.length < 16) {
+    throw new Error("Random bytes length must be >= 16");
+  }
+  if (!buf) {
+    buf = new Uint8Array(16);
+    offset = 0;
+  } else {
+    if (offset < 0 || offset + 16 > buf.length) {
+      throw new RangeError(`UUID byte range ${offset}:${offset + 15} is out of buffer bounds`);
+    }
+  }
+  msecs ??= Date.now();
+  seq ??= rnds[6] * 127 << 24 | rnds[7] << 16 | rnds[8] << 8 | rnds[9];
+  buf[offset++] = msecs / 1099511627776 & 255;
+  buf[offset++] = msecs / 4294967296 & 255;
+  buf[offset++] = msecs / 16777216 & 255;
+  buf[offset++] = msecs / 65536 & 255;
+  buf[offset++] = msecs / 256 & 255;
+  buf[offset++] = msecs & 255;
+  buf[offset++] = 112 | seq >>> 28 & 15;
+  buf[offset++] = seq >>> 20 & 255;
+  buf[offset++] = 128 | seq >>> 14 & 63;
+  buf[offset++] = seq >>> 6 & 255;
+  buf[offset++] = seq << 2 & 255 | rnds[10] & 3;
+  buf[offset++] = rnds[11];
+  buf[offset++] = rnds[12];
+  buf[offset++] = rnds[13];
+  buf[offset++] = rnds[14];
+  buf[offset++] = rnds[15];
+  return buf;
+}
+var v7_default = v7;
+
+// examples/micro-app-sdk/src/uuid.mjs
+var newUuid = () => v7_default();
+var isUuidV7 = (value) => typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+var ids = (value) => Array.isArray(value) && value.every(isUuidV7);
+function menus(value) {
+  if (!Array.isArray(value)) return false;
+  const pending = [...value], seen = /* @__PURE__ */ new Set();
+  while (pending.length) {
+    const menu = pending.pop();
+    if (!isUuidV7(menu?.id) || menu.parentId != null && !isUuidV7(menu.parentId) || seen.has(menu)) return false;
+    seen.add(menu);
+    if (menu.children !== void 0) {
+      if (!Array.isArray(menu.children)) return false;
+      for (const child of menu.children) pending.push(child);
+    }
+  }
+  return true;
+}
+function hasV7ContextIds(props) {
+  return isUuidV7(props?.user?.id) && isUuidV7(props?.tenant?.id) && isUuidV7(props?.organization?.id) && (props.organizationScopeIds == null || ids(props.organizationScopeIds)) && (props.roles === void 0 || Array.isArray(props.roles) && props.roles.every((role) => isUuidV7(role?.id))) && (props.menus === void 0 || menus(props.menus)) && (props.dataGrants === void 0 || Array.isArray(props.dataGrants) && props.dataGrants.every((grant) => isUuidV7(grant?.subjectUserId) && isUuidV7(grant?.tenantId) && ids(grant?.organizationIds))) && (props.entryVersionId == null || isUuidV7(props.entryVersionId));
 }
 
 // examples/micro-app-sdk/src/http.mjs
@@ -31,7 +137,6 @@ var messages = Object.freeze({
   PROTOCOL: "Application response does not match the supported protocol",
   HTTP: "Application request failed"
 });
-var uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 var MicroSdkError = class extends Error {
   constructor(kind, { status = 0, requestId, code } = {}) {
     super(messages[kind] || messages.PROTOCOL);
@@ -39,7 +144,7 @@ var MicroSdkError = class extends Error {
     this.kind = Object.hasOwn(messages, kind) ? kind : "PROTOCOL";
     this.status = Number.isInteger(status) && status >= 0 && status <= 599 ? status : 0;
     this.code = typeof code === "string" && /^[A-Z][A-Z0-9_]{0,63}$/.test(code) ? code : this.kind;
-    if (typeof requestId === "string" && uuid.test(requestId)) this.requestId = requestId;
+    if (typeof requestId === "string" && isUuidV7(requestId)) this.requestId = requestId;
   }
   toJSON() {
     return {
@@ -141,7 +246,7 @@ async function requestWithContext({
   } catch {
     throw protocolError("UNSUPPORTED_SDK_VERSION");
   }
-  if (props?.contractVersion !== MICRO_PROPS_CONTRACT_VERSION || typeof props.token !== "string" || !props.token || !props.signal || typeof props.signal.addEventListener !== "function") throw protocolError("UNSUPPORTED_MICRO_PROPS");
+  if (props?.contractVersion !== MICRO_PROPS_CONTRACT_VERSION || !hasV7ContextIds(props) || typeof props.token !== "string" || !props.token || !props.signal || typeof props.signal.addEventListener !== "function") throw protocolError("UNSUPPORTED_MICRO_PROPS");
   const request = new AbortController();
   const abort = () => request.abort();
   const signals = [...new Set([props.signal, options.signal].filter(Boolean))];
@@ -156,7 +261,7 @@ async function requestWithContext({
     verify();
     const headers = new Headers(options.headers);
     const supplied = headers.get("X-Request-Id");
-    requestId = supplied && uuid.test(supplied) ? supplied : globalThis.crypto.randomUUID();
+    requestId = supplied && isUuidV7(supplied) ? supplied : newUuid();
     headers.set("X-Request-Id", requestId);
     headers.set("Authorization", "Bearer " + props.token);
     let response;
@@ -173,7 +278,7 @@ async function requestWithContext({
       throw new MicroSdkError("PROTOCOL", { requestId, code: "INVALID_RESPONSE" });
     }
     const echoed = response.headers.get("X-Request-Id");
-    if (echoed && uuid.test(echoed)) requestId = echoed;
+    if (echoed && isUuidV7(echoed)) requestId = echoed;
     if (!response.ok) {
       response.body?.cancel?.().catch(() => {
       });
@@ -216,7 +321,7 @@ var clientChecks = Object.freeze([
   ["TextDecoder", (env) => typeof env.TextDecoder === "function"],
   ["ReadableStream", (env) => typeof env.ReadableStream === "function"],
   ["Response.body", (env) => typeof env.Response === "function" && "body" in env.Response.prototype],
-  ["crypto.randomUUID", (env) => typeof env.crypto?.randomUUID === "function"]
+  ["crypto.getRandomValues", (env) => typeof env.crypto?.getRandomValues === "function"]
 ]);
 var modeChecks = Object.freeze({
   client: clientChecks
@@ -311,7 +416,7 @@ function createContextClient(initialProps, fetchImpl = globalThis.fetch) {
       stop();
       throw protocolError("UNSUPPORTED_SDK_VERSION");
     }
-    if (next?.contractVersion !== MICRO_PROPS_CONTRACT_VERSION || typeof next.token !== "string" || !next.token || !next.signal || typeof next.signal.addEventListener !== "function" || !Number.isSafeInteger(next.contextEpoch) || next.contextEpoch <= 0 || !next.contextVersion || !next.user?.id || !next.tenant?.id || !next.organization?.id) {
+    if (next?.contractVersion !== MICRO_PROPS_CONTRACT_VERSION || typeof next.token !== "string" || !next.token || !next.signal || typeof next.signal.addEventListener !== "function" || !Number.isSafeInteger(next.contextEpoch) || next.contextEpoch <= 0 || !next.contextVersion || !hasV7ContextIds(next)) {
       stop();
       throw protocolError("UNSUPPORTED_MICRO_PROPS");
     }
@@ -372,6 +477,10 @@ function createNotificationPublisher(client) {
       const current = client.current();
       if (!current?.appCode) throw contextAbortError();
       if (typeof body?.idempotencyKey !== "string" || !body.idempotencyKey.trim()) {
+        throw protocolError("INVALID_NOTIFICATION");
+      }
+      const target = body.target;
+      if (target?.kind === "USER" && (!isUuidV7(target.userId) || !isUuidV7(target.organizationId)) || target?.kind === "ORGANIZATION" && !isUuidV7(target.organizationId)) {
         throw protocolError("INVALID_NOTIFICATION");
       }
       let payload;

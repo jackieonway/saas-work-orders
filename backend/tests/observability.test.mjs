@@ -2,13 +2,13 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import http from 'node:http'
-import { randomUUID } from 'node:crypto'
+import { newId, validId } from '../uuid.mjs'
 import { createServer } from '../server.mjs'
 import { loadConfig } from '../config.mjs'
 
 const TOKEN = 'FixtureOnlyMetricsToken0123456789AbCd'
 async function fixture(t) {
-  const ids = { user: randomUUID(), tenant: randomUUID(), organization: randomUUID(), app: randomUUID() }
+  const ids = { user: newId(), tenant: newId(), organization: newId(), app: newId() }
   const state = { database: true, platform: true, calls: [], logs: [] }
   const platform = http.createServer((req, res) => {
     state.calls.push({ path: req.url, requestId: req.headers['x-request-id'] })
@@ -44,12 +44,19 @@ test('HTTP fixtures: metrics deny absent/wrong auth, UUID trace propagates, and 
   for (const authorization of [undefined, 'Bearer wrong', 'Basic ' + TOKEN]) {
     assert.equal((await fetch(url + '/metrics', { headers: authorization ? { authorization } : {} })).status, 401)
   }
-  const trace = randomUUID(), secret = 'fixture-app-token-never-log'
+  const trace = newId(), secret = 'fixture-app-token-never-log'
   const response = await fetch(url + '/tickets?status=OPEN', { headers: { authorization: 'Bearer ' + secret, 'x-request-id': trace } })
   assert.equal(response.status, 200); assert.equal(response.headers.get('x-request-id'), trace)
   assert.ok(state.calls.filter((call) => call.path === '/oauth/introspect' || call.path.endsWith('/context')).every((call) => call.requestId === trace))
   const failed = await fetch(url + '/tickets?title=private-title', { headers: { 'x-request-id': 'unsafe-injected-value' } })
-  assert.equal(failed.status, 401); assert.match(failed.headers.get('x-request-id'), /^[0-9a-f-]{36}$/)
+  assert.equal(failed.status, 401); assert.equal(validId(failed.headers.get('x-request-id')), true)
+  const legacyTrace = '0199fe00-0000-4000-8000-000000000001' // explicit inbound v4 negative
+  const legacyResponse = await fetch(url + '/tickets', { headers: { authorization: 'Bearer ' + secret, 'x-request-id': legacyTrace } })
+  const replacement = legacyResponse.headers.get('x-request-id')
+  assert.equal(legacyResponse.status, 200)
+  assert.equal(validId(replacement), true); assert.notEqual(replacement, legacyTrace)
+  assert.ok(state.calls.filter(call => call.requestId === replacement).length >= 2)
+  assert.ok(!state.logs.join('\n').includes(legacyTrace))
   const metrics = await fetch(url + '/metrics', { headers: { authorization: 'Bearer ' + TOKEN } })
   assert.equal(metrics.status, 200)
   const body = await metrics.text()

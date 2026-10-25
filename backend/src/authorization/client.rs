@@ -254,11 +254,8 @@ impl PlatformClient {
     ) -> Result<Vec<u8>, ApiError> {
         // Accept metadata only after canonicalization; never reflect arbitrary
         // caller input into upstream headers or an HTTP-client error diagnostic.
-        if request_id.len() == 36 {
-            if let Ok(id) = uuid::Uuid::parse_str(request_id) {
-                request = request.header("x-request-id", id.to_string());
-            }
-        }
+        let request_id = crate::uuid_v7::parse(request_id).ok_or_else(|| failure(kind))?;
+        request = request.header("x-request-id", request_id.to_string());
         if let Some(attempt) = attempt {
             attempt.mark();
         }

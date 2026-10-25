@@ -4,7 +4,7 @@
 
 use serde::{Deserialize, Serialize};
 /// The only registered SDK release; wire contract majors remain independently versioned.
-pub const SDK_VERSION: &str = "2.0.0";
+pub const SDK_VERSION: &str = "3.0.0";
 /// Context wire contract supported by this release.
 pub const CONTEXT_VERSION: &str = "1.0";
 /// Props wire contract supported by this release.
@@ -19,8 +19,8 @@ pub const ORGANIZATION_LIMIT: usize = 10000;
 /// Public wire type generated from `$defs.SDKVersion`; validation is separate from authorization.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SDKVersion {
-    #[serde(rename = "2.0.0")]
-    V2Dot0Dot0,
+    #[serde(rename = "3.0.0")]
+    V3Dot0Dot0,
 }
 
 /// Public wire type generated from `$defs.ContextContractVersion`; validation is separate from authorization.
@@ -455,6 +455,58 @@ impl std::fmt::Display for ProtocolError {
 }
 impl std::error::Error for ProtocolError {}
 
+fn uuid_v7(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    bytes.len() == 36
+        && bytes.iter().enumerate().all(|(index, byte)| {
+            if [8, 13, 18, 23].contains(&index) {
+                *byte == b'-'
+            } else {
+                byte.is_ascii_hexdigit()
+            }
+        })
+        && bytes[14] == b'7'
+        && matches!(bytes[19], b'8' | b'9' | b'a' | b'A' | b'b' | b'B')
+}
+fn nullable_uuid_v7(value: &OptionalNullable<String>) -> bool {
+    match value {
+        OptionalNullable::Missing | OptionalNullable::Null => true,
+        OptionalNullable::Value(value) => uuid_v7(value),
+    }
+}
+fn context_ids(
+    user: &MicroUser,
+    tenant: &MicroTenant,
+    organization: &MicroOrganization,
+    roles: &[MicroRole],
+    grants: &[MicroDataGrant],
+    menus: &[MicroMenuItem],
+) -> bool {
+    if ![&user.id, &tenant.id, &organization.id]
+        .into_iter()
+        .all(|id| uuid_v7(id))
+        || roles.iter().any(|role| !uuid_v7(&role.id))
+        || grants.iter().any(|grant| {
+            !uuid_v7(&grant.subject_user_id)
+                || !uuid_v7(&grant.tenant_id)
+                || grant.organization_ids.len() > ORGANIZATION_LIMIT
+                || grant.organization_ids.iter().any(|id| !uuid_v7(id))
+        })
+    {
+        return false;
+    }
+    let mut pending: Vec<_> = menus.iter().collect();
+    while let Some(menu) = pending.pop() {
+        if !uuid_v7(&menu.id) || menu.parent_id.as_deref().is_some_and(|id| !uuid_v7(id)) {
+            return false;
+        }
+        if let Some(children) = &menu.children {
+            pending.extend(children);
+        }
+    }
+    true
+}
+
 fn organization_ceiling<'a>(
     scope: &'a OptionalNullable<Vec<String>>,
     current: &'a str,
@@ -464,7 +516,7 @@ fn organization_ceiling<'a>(
         OptionalNullable::Null => Ok(None),
         OptionalNullable::Value(ids)
             if ids.len() <= ORGANIZATION_LIMIT
-                && ids.iter().all(|id| !id.is_empty())
+                && ids.iter().all(|id| uuid_v7(id))
                 && ids.iter().any(|id| id == current) =>
         {
             Ok(Some(ids.iter().map(String::as_str).collect()))
@@ -483,10 +535,16 @@ impl AppAuthorizationContext {
     pub fn validate(&self) -> Result<(), ProtocolError> {
         if self.app_code.is_empty()
             || self.context_version.is_empty()
-            || self.application.id.is_empty()
-            || self.user.id.is_empty()
-            || self.tenant.id.is_empty()
-            || self.organization.id.is_empty()
+            || !uuid_v7(&self.application.id)
+            || !nullable_uuid_v7(&self.application.entry_version_id)
+            || !context_ids(
+                &self.user,
+                &self.tenant,
+                &self.organization,
+                &self.roles,
+                &self.data_grants,
+                &self.menus,
+            )
         {
             return Err(ProtocolError);
         }
@@ -518,13 +576,22 @@ impl MicroPropsWire {
             || self.token.is_empty()
             || self.app_code.is_empty()
             || self.base_path != format!("/micro/{}", self.app_code)
+            || !nullable_uuid_v7(&self.entry_version_id)
+            || !context_ids(
+                &self.user,
+                &self.tenant,
+                &self.organization,
+                &self.roles,
+                &self.data_grants,
+                &self.menus,
+            )
         {
             return Err(ProtocolError);
         }
         if let Some(ids) = &self.organization_scope_ids {
             if ids.len() > ORGANIZATION_LIMIT
                 || !ids.iter().any(|id| id == &self.organization.id)
-                || ids.iter().any(String::is_empty)
+                || ids.iter().any(|id| !uuid_v7(id))
             {
                 return Err(ProtocolError);
             }
@@ -553,7 +620,7 @@ fn notification_text(title: &str, content: &str, link: &str) -> bool {
         && link.chars().count() <= 300
 }
 fn notification_id(value: &str) -> bool {
-    !value.is_empty() && value.len() <= 128
+    uuid_v7(value)
 }
 fn publication_pair(application: &Option<String>, publication: &Option<String>) -> bool {
     match (application, publication) {

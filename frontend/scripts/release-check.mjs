@@ -67,7 +67,7 @@ async function checkLifecycle(javascript, info) {
     }; }`).runInContext(sandbox, { timeout: 5000 })
   const script = new vm.Script(javascript, { filename: info.entry })
   script.runInContext(sandbox, { timeout: 5000 })
-  if (JSON.stringify(sandbox.__gateSdkVersions) !== '[["2.0.0"]]') fail('executed UMD does not support exactly SDK 2.0.0')
+  if (JSON.stringify(sandbox.__gateSdkVersions) !== '[["3.0.0"]]') fail('executed UMD does not support exactly SDK 3.0.0')
   const lifecycle = sandbox.WorkOrdersMicroApp
   if (!lifecycle || Object.keys(lifecycle).sort().join(',') !== 'bootstrap,mount,unmount,update' ||
     Object.values(lifecycle).some(value => typeof value !== 'function')) fail('UMD must export exactly bootstrap/mount/update/unmount')
@@ -116,7 +116,7 @@ export async function checkRelease(directory = path.join(appRoot, 'dist'), { sou
   const info = json(path.join(root, 'build-info.json'))
   const inventory = json(path.join(root, releaseHashFile))
   if (info.application !== 'work-orders' || info.runtime !== 'qiankun' || info.format !== 'umd' ||
-    info.contractVersion !== '2.0' || info.sdkVersion !== '2.0.0' || info.releaseGateVersion !== 1) fail('requires qiankun UMD, MicroProps 2.0 and SDK 2.0.0 metadata')
+    info.contractVersion !== '2.0' || info.sdkVersion !== '3.0.0' || info.releaseGateVersion !== 1) fail('requires qiankun UMD, MicroProps 2.0 and SDK 3.0.0 metadata')
   if (typeof info.version !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(info.version) || info.version.includes('..') ||
     (expectedVersion && info.version !== expectedVersion)) fail('application version mismatch')
   const pkg = json(path.join(source, 'package.json')), lock = json(path.join(source, 'package-lock.json'))
@@ -129,7 +129,7 @@ export async function checkRelease(directory = path.join(appRoot, 'dist'), { sou
     info.packageLockSha256 !== inputs.find(input => input.path === 'package-lock.json').sha256) fail('source fingerprint mismatch')
   if (!inputs.some(input => input.path === 'src/qiankun-entry.mjs') || inputs.some(input => /(?:iframe-bridge|src\/(?:main|lifecycle)\.mjs|vendor\/micro-sdk\.mjs)$/.test(input.path))) fail('legacy source entry present')
   const sdk = json(path.join(source, 'vendor/micro-sdk/package.json')), sdkSource = json(path.join(source, 'vendor/micro-sdk/SOURCE.json'))
-  if (sdk.version !== '2.0.0' || sdkSource.sdkVersion !== '2.0.0' || !Array.isArray(sdkSource.files)) fail('SDK source is not 2.0.0')
+  if (sdk.version !== '3.0.0' || sdkSource.sdkVersion !== '3.0.0' || !Array.isArray(sdkSource.files)) fail('SDK source is not 2.0.0')
   for (const record of sdkSource.files) {
     if (!literalPath(record.path)) fail('unsafe SDK provenance path')
     const bytes = readFileSync(path.join(source, 'vendor/micro-sdk', record.path))
@@ -179,8 +179,8 @@ export async function checkRelease(directory = path.join(appRoot, 'dist'), { sou
   const allowedFiles = new Set(['index.html', 'build-info.json', 'asset-manifest.json', 'assets/vue.LICENSE.txt', releaseHashFile, info.entry, ...css, ...cssResources])
   if (files.some(file => !allowedFiles.has(file.path))) fail('release contains an untracked asset')
   const javascript = readFileSync(path.join(root, info.entry), 'utf8')
-  if (/\bimport\s*\(|iframe-bridge|window\.Vue|postMessage\s*\(/.test(javascript) || !javascript.includes('2.0.0') ||
-    !javascript.includes('UNSUPPORTED_SDK_VERSION')) fail('UMD contains legacy transport or lacks the SDK 2 runtime')
+  if (/\bimport\s*\(|iframe-bridge|window\.Vue|postMessage\s*\(/.test(javascript) || !javascript.includes('3.0.0') ||
+    !javascript.includes('UNSUPPORTED_SDK_VERSION')) fail('UMD contains legacy transport or lacks the SDK 3 runtime')
   const containsLiteral = value => javascript.includes(JSON.stringify(value)) ||
     javascript.includes('`' + value.replaceAll('\\', '\\\\').replaceAll('`', '\\`').replaceAll('${', '\\${') + '`') ||
     javascript.includes("'" + value.replaceAll('\\', '\\\\').replaceAll("'", "\\'") + "'")

@@ -35,7 +35,7 @@ test('release gate checks actual UMD assets and fails closed for stale, incomple
   assert.match(built.stdout, /Release gate passed/)
   const report = await checkRelease(output)
   assert.equal(report.runtime, 'qiankun')
-  assert.equal(report.sdkVersion, '2.0.0')
+  assert.equal(report.sdkVersion, '3.0.0')
   assert.equal(report.version, readJson(path.join(appRoot, 'package.json')).version)
   const cli = spawnSync(process.execPath, [fileURLToPath(new URL('../scripts/release-check.mjs', import.meta.url)), output],
     { encoding: 'utf8', windowsHide: true, timeout: 30000 })
@@ -63,13 +63,13 @@ test('release gate checks actual UMD assets and fails closed for stale, incomple
   await reject('SDK 1 metadata', directory => {
     const file = path.join(directory, 'build-info.json'), info = readJson(file)
     info.sdkVersion = '1.0.0'; writeJson(file, info)
-  }, { pattern: /SDK 2\.0\.0/ })
-  await reject('SDK 1 runtime despite SDK 2 metadata and matching hashes', directory => {
+  }, { pattern: /SDK 3\.0\.0/ })
+  await reject('SDK 1 runtime despite SDK 3 metadata and matching hashes', directory => {
     const file = path.join(directory, 'assets/micro-app.umd.js')
     const javascript = readFileSync(file, 'utf8')
-    assert.ok(javascript.includes('Object.freeze([`2.0.0`])'))
-    writeFileSync(file, javascript.replace('Object.freeze([`2.0.0`])', 'Object.freeze([`1.0.0`])'))
-  }, { pattern: /executed UMD does not support exactly SDK 2\.0\.0/ })
+    assert.ok(javascript.includes('Object.freeze([`3.0.0`])'))
+    writeFileSync(file, javascript.replace('Object.freeze([`3.0.0`])', 'Object.freeze([`1.0.0`])'))
+  }, { pattern: /executed UMD does not support exactly SDK 3\.0\.0/ })
   await reject('stale source fingerprint', directory => {
     const file = path.join(directory, 'build-info.json'), info = readJson(file)
     info.inputs.find(input => input.path === 'src/app.mjs').sha256 = '0'.repeat(64); writeJson(file, info)
@@ -106,7 +106,7 @@ test('local candidate contains checked assets and public nginx configuration and
   assert.equal(created.metadata.state, 'local-candidate')
   assert.equal(created.metadata.deployed, false)
   assert.equal(created.metadata.runtime, 'qiankun')
-  assert.equal(created.metadata.sdkVersion, '2.0.0')
+  assert.equal(created.metadata.sdkVersion, '3.0.0')
   assert.deepEqual(created.metadata.publicConfig, { appCode: 'work-orders', ...input })
   const metadata = readJson(path.join(created.directory, 'candidate.json'))
   assert.deepEqual(metadata.files, releaseFiles(created.directory).filter(file => file.path !== 'candidate.json'))

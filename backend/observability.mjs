@@ -1,7 +1,7 @@
-import { randomUUID, timingSafeEqual } from 'node:crypto'
+import { timingSafeEqual } from 'node:crypto'
 import { performance } from 'node:perf_hooks'
+import { newId, validId } from './uuid.mjs'
 
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const METHODS = new Set(['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS', 'HEAD', 'PUT'])
 const STATUSES = new Set([200, 201, 204, 400, 401, 403, 404, 405, 409, 413, 429, 500, 502, 503])
 const BUCKETS = [.005, .025, .1, .5, 1, 5, 15]
@@ -17,7 +17,7 @@ export function metricsToken(env, production) {
   return token
 }
 
-export function requestId(value) { return typeof value === 'string' && UUID.test(value) ? value.toLowerCase() : randomUUID() }
+export function requestId(value) { return validId(value) ? value.toLowerCase() : newId() }
 export function metricsAllowed(header, token) {
   if (!token || typeof header !== 'string') return false
   const actual = Buffer.from(header), expected = Buffer.from('Bearer ' + token)
@@ -46,7 +46,7 @@ export function createTelemetry({ service, routeFor, logger = console, gauges = 
       series.set(key, item)
       const entry = { timestamp: new Date().toISOString(), event: 'http_request', service, route, method, status, request_id: metadata.requestId,
         duration_ms: Math.round(seconds * 1000) }
-      if (UUID.test(metadata.tenantId || '') && UUID.test(metadata.organizationId || '')) {
+      if (validId(metadata.tenantId) && validId(metadata.organizationId)) {
         entry.tenant_id = metadata.tenantId; entry.organization_id = metadata.organizationId
       }
       logger.info(JSON.stringify(entry))

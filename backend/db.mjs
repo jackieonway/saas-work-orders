@@ -16,7 +16,7 @@ export async function migrate(pool) {
     await client.query("SELECT pg_advisory_xact_lock(hashtextextended('work-orders-business-migrations',11))")
     await client.query('CREATE TABLE IF NOT EXISTS work_order_migrations(version TEXT PRIMARY KEY,checksum CHAR(64) NOT NULL,applied_at TIMESTAMPTZ NOT NULL DEFAULT now())')
     const directory = new URL('./migrations/', import.meta.url)
-    const files = (await readdir(directory)).filter((file) => /^\d{4}_[a-z_]+\.sql$/.test(file)).sort()
+    const files = (await readdir(directory)).filter((file) => /^\d{4}_[a-z][a-z0-9_]*\.sql$/.test(file)).sort()
     for (const file of files) {
       const sql = await readFile(new URL(file, directory), 'utf8')
       const checksum = createHash('sha256').update(sql).digest('hex')

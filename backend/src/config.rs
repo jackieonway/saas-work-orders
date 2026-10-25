@@ -28,6 +28,7 @@ use crate::error::ConfigError;
 /// ```
 #[derive(Clone)]
 pub struct Config {
+    pub(crate) database_initialization: crate::imported::Initialization,
     pub(crate) metrics_token: Option<String>,
     pub(crate) database: PgConnectOptions,
     pub(crate) bind: std::net::SocketAddr,
@@ -68,6 +69,16 @@ impl Config {
     /// Load the current process environment, without automatic `.env` loading.
     /// Returns a sanitized error when any required value or bound is invalid.
     pub fn from_env() -> Result<Self, ConfigError> {
+        for name in [
+            "WORK_ORDERS_DATABASE_INIT_MODE",
+            "WORK_ORDERS_EXPECTED_DATABASE",
+            "WORK_ORDERS_IMPORT_MARKER",
+            "WORK_ORDERS_EXPECTED_SCHEMA_SHA256",
+        ] {
+            if matches!(std::env::var(name), Err(std::env::VarError::NotUnicode(_))) {
+                return Err(ConfigError::ImportReceipt);
+            }
+        }
         Self::from_lookup(|key| std::env::var(key).ok())
     }
 
@@ -87,9 +98,11 @@ impl Config {
     }
 
     fn from_lookup(get: impl Fn(&str) -> Option<String>) -> Result<Self, ConfigError> {
+        let database_initialization = crate::imported::Initialization::from_lookup(&get)?;
         let production = get("NODE_ENV").as_deref() == Some("production");
         let database =
             database_options(&get("WORK_ORDERS_DATABASE_URL").ok_or(ConfigError::DatabaseUrl)?)?;
+        database_initialization.validate_target(&database)?;
         let host = get("WORK_ORDERS_HOST").unwrap_or_else(|| "0.0.0.0".into());
         // Binding numeric IPs avoids an unbounded DNS lookup during startup.
         let host: IpAddr = host.trim().parse().map_err(|_| ConfigError::Host)?;
@@ -122,6 +135,7 @@ impl Config {
             return Err(ConfigError::MetricsToken);
         }
         Ok(Self {
+            database_initialization,
             metrics_token,
             database,
             bind: (host, port as u16).into(),

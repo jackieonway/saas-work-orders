@@ -52,14 +52,7 @@ fn decode(value: &str) -> Result<String, ApiError> {
 }
 
 pub(super) fn uuid(value: &str) -> Option<Uuid> {
-    if value.len() != 36 {
-        return None;
-    }
-    let id = Uuid::parse_str(value).ok()?;
-    id.hyphenated()
-        .to_string()
-        .eq_ignore_ascii_case(value)
-        .then_some(id)
+    crate::uuid_v7::parse(value)
 }
 
 fn positive(value: &str, maximum: u32) -> Result<u32, ApiError> {
@@ -172,5 +165,17 @@ mod tests {
         assert!(parse(Some(&format!("action=create&q=+{}+", "x".repeat(99)))).is_err());
         let value = parse(Some("action=create&q=%EF%BB%BF+hello+%EF%BB%BF")).expect("BOM trim");
         assert_eq!(value.q, "hello");
+    }
+
+    #[test]
+    fn non_v7_organization_is_rejected_without_widening_directory_scope() {
+        // Explicit old-version and wrong-variant negative fixtures.
+        for raw in [
+            "01900000-0000-4000-8000-000000000001",
+            "01900000-0000-7000-c000-000000000001",
+            "00000000-0000-0000-0000-000000000000",
+        ] {
+            assert!(parse(Some(&format!("action=create&organizationId={raw}"))).is_err());
+        }
     }
 }

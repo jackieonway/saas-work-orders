@@ -15,9 +15,12 @@ mod config;
 mod directory;
 mod error;
 mod http;
+mod imported;
+mod migration_cli;
 mod migrations;
 mod reads;
 mod reminders;
+mod uuid_v7;
 mod writes;
 
 use std::{future::IntoFuture, time::Duration};
@@ -30,6 +33,7 @@ use error::ServiceFailure;
 pub use config::Config;
 pub use error::{ConfigError, ServiceError};
 pub use http::{application, router};
+pub use migration_cli::{run_migration_command, MigrationCommandError};
 pub use migrations::{
     MigrationError as InitializationError, MigrationOutcome as InitializationReport,
 };
@@ -85,15 +89,22 @@ pub async fn run(config: Config) -> Result<(), ServiceError> {
     let (pool, outcome, authorizer) = tokio::time::timeout(config.startup_timeout, async {
         let authorizer = authorization::Authorizer::new(&config)?;
         let pool = connect_database(&config).await?;
-        match initialize_database(&pool).await {
+        let initialized = match &config.database_initialization {
+            imported::Initialization::Seed => initialize_database(&pool).await.map_err(|error| {
+                ServiceError::caused_by(ServiceFailure::InitializationFailed, error)
+            }),
+            imported::Initialization::Imported(receipt) => {
+                imported::verify(&pool, receipt, config.database.get_username())
+                    .await
+                    .map(|()| InitializationReport::AlreadyCurrent)
+            }
+        };
+        match initialized {
             Ok(outcome) => Ok((pool, outcome, authorizer)),
             Err(error) => {
                 tracing::error!(event = "work_orders_baseline_rejected", reason = %error);
                 pool.close().await;
-                Err(ServiceError::caused_by(
-                    ServiceFailure::InitializationFailed,
-                    error,
-                ))
+                Err(error)
             }
         }
     })

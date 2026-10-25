@@ -66,7 +66,7 @@ where
         .connect(&raw)
         .await
         .expect("owned admin");
-    let name = format!("work_orders_phase18_{}", Uuid::new_v4().simple());
+    let name = format!("work_orders_phase18_{}", Uuid::now_v7().simple());
     sqlx::query(&format!("CREATE DATABASE \"{name}\""))
         .execute(&admin)
         .await
@@ -96,9 +96,9 @@ where
         pool,
         database_url: url.to_string(),
         identity: Identity {
-            tenant: Uuid::new_v4(),
-            org: Uuid::new_v4(),
-            user: Uuid::new_v4(),
+            tenant: Uuid::now_v7(),
+            org: Uuid::now_v7(),
+            user: Uuid::now_v7(),
         },
         pools: pools.clone(),
     };
@@ -198,7 +198,7 @@ impl Scenario {
             "user":{"id":self.identity.user.to_string(),"username":"writer","displayName":self.display_name},
             "tenant":{"id":self.identity.tenant.to_string()},
             "organization":{"id":self.identity.org.to_string(),"name":self.organization_name},
-            "application":{"id":"33333333-3333-4333-8333-333333333333"},"organizationScopeIds":self.ceiling,
+            "application":{"id":"33333333-3333-7333-8333-333333333333"},"organizationScopeIds":self.ceiling,
             "permissions":self.permissions,"dataGrants":self.grants.iter().map(|action|json!({
                 "resource":"ticket","action":action,"tenantId":self.identity.tenant.to_string(),
                 "subjectUserId":self.identity.user.to_string(),"scope":self.scope,
@@ -676,20 +676,20 @@ async fn receipt_identity_domains_and_revocation() {
         let h = Harness::new(&f).await;
         let body = json!({"title":"same domain body"});
         let mut ids = std::collections::BTreeSet::new();
-        let other_tenant = Uuid::new_v4();
+        let other_tenant = Uuid::now_v7();
         for (token, identity) in [
             ("writer", f.identity),
             (
                 "new-org",
                 Identity {
-                    org: Uuid::new_v4(),
+                    org: Uuid::now_v7(),
                     ..f.identity
                 },
             ),
             (
                 "new-user",
                 Identity {
-                    user: Uuid::new_v4(),
+                    user: Uuid::now_v7(),
                     ..f.identity
                 },
             ),
@@ -917,9 +917,9 @@ async fn write_validation_preserves_identity_and_rejects_duplicate_json() {
                 .error(400, "VALIDATION_ERROR");
         }
         for body in [
-            json!({"version":1,"tenantId":Uuid::new_v4().to_string()}),
-            json!({"version":1,"organizationId":Uuid::new_v4().to_string()}),
-            json!({"version":1,"ownerUserId":Uuid::new_v4().to_string()}),
+            json!({"version":1,"tenantId":Uuid::now_v7().to_string()}),
+            json!({"version":1,"organizationId":Uuid::now_v7().to_string()}),
+            json!({"version":1,"ownerUserId":Uuid::now_v7().to_string()}),
             json!({"version":1,"number":"SPOOF"}),
             json!({"version":1,"organizationName":"SPOOF"}),
             json!({"version":1,"unknown":1}),
@@ -1025,7 +1025,7 @@ async fn write_validation_preserves_identity_and_rejects_duplicate_json() {
 #[ignore = "requires owned CI PostgreSQL"]
 async fn nonempty_assignee_requires_available_validated_directory() {
     owned(|f|async move {
-        let h=Harness::new(&f).await;let assignee=Uuid::new_v4().to_string();
+        let h=Harness::new(&f).await;let assignee=Uuid::now_v7().to_string();
         h.request(Method::POST,"writer","/tickets",Some("assigned-create"),json!({"title":"assigned","assigneeUserId":assignee})).await.error(503,"PLATFORM_UNAVAILABLE");
         assert_eq!(h.state.lock().unwrap().members,1);
         assert_eq!(counts(&f).await,(0,0));assert_eq!(counter(&f,f.identity.tenant).await,None);
@@ -1035,17 +1035,20 @@ async fn nonempty_assignee_requires_available_validated_directory() {
         assert_eq!(h.state.lock().unwrap().members,2);
         sqlx::query("UPDATE public.work_orders SET assignee_user_id=$1,assignee_display_name='历史处理人' WHERE id=$2")
             .bind(Uuid::parse_str(&assignee).unwrap()).bind(Uuid::parse_str(&id).unwrap()).execute(&f.pool).await.unwrap();
-        let retained=h.request(Method::PATCH,"writer",&path,None,json!({"version":1,"assigneeUserId":assignee})).await;
+        let before=row(&f,&id).await;
+        h.request(Method::PATCH,"writer",&path,None,json!({"version":1,"assigneeUserId":assignee})).await.error(503,"PLATFORM_UNAVAILABLE");
+        assert_eq!(h.state.lock().unwrap().members,3);assert_eq!(row(&f,&id).await,before,"same-ID validation failure leaves the row unchanged");
+        let retained=h.request(Method::PATCH,"writer",&path,None,json!({"version":1,"title":"ordinary edit with omitted assignment"})).await;
         assert_eq!(retained.status,200);assert_eq!(retained.json()["assigneeDisplayName"],"历史处理人");assert_eq!(retained.json()["version"],2);
         h.request(Method::POST,"writer","/tickets",Some("invalid-member"),json!({"title":"invalid","assigneeUserId":"invalid"})).await.error(400,"VALIDATION_ERROR");
         h.request(Method::PATCH,"writer",&path,None,json!({"version":2,"assigneeUserId":"invalid"})).await.error(400,"VALIDATION_ERROR");
-        assert_eq!(h.state.lock().unwrap().members,2,"unchanged and malformed assignments do not call the directory");
+        assert_eq!(h.state.lock().unwrap().members,3,"omitted and malformed assignments do not call the directory");
         let cleared=h.request(Method::PATCH,"writer",&path,None,json!({"version":2,"assigneeUserId":null})).await;assert_eq!(cleared.status,200);assert_eq!(cleared.json()["assigneeUserId"],Value::Null);
         let preflight=h.client.request(Method::OPTIONS,format!("{}{PREFIX}/tickets",h.origin)).header("origin","https://platform.example.test")
             .header("access-control-request-method","POST").header("access-control-request-headers","Authorization, Content-Type, Idempotency-Key").send().await.unwrap();
         assert_eq!(preflight.status(),204);assert_eq!(preflight.headers().get("access-control-allow-origin").unwrap(),"https://platform.example.test");
         assert!(preflight.headers().get("access-control-allow-headers").unwrap().to_str().unwrap().to_ascii_lowercase().contains("idempotency-key"));
-        assert_eq!(h.state.lock().unwrap().members,2);
+        assert_eq!(h.state.lock().unwrap().members,3);
     }).await;
 }
 
