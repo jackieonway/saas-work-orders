@@ -38,12 +38,8 @@ pub use migrations::{
     MigrationError as InitializationError, MigrationOutcome as InitializationReport,
 };
 
-/// Initialize or strictly verify the independent business database baseline.
-///
-/// This coordinates concurrent legacy/Rust starts, checks the immutable legacy
-/// SHA-256 migration and exact schema, and records SQLx adoption transactionally.
-/// Existing work orders and counters are never rewritten. Any inconsistent
-/// state is rejected; no HTTP listener is opened by this function.
+/// Initialize an empty work-order database or verify the current fresh baseline.
+/// Historical migration histories are rejected; reset old installations explicitly.
 pub async fn initialize_database(
     pool: &PgPool,
 ) -> Result<InitializationReport, InitializationError> {

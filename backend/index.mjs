@@ -1,3 +1,0 @@
-// Historical modules remain available to compatibility tests, without a service entry.
-console.error('NODE_RUNTIME_RETIRED: use the Rust work-orders API; from the repository root run cargo run --locked --manifest-path backend/Cargo.toml, or backend/deploy its Rust image.')
-process.exitCode = 1

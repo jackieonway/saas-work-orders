@@ -32,8 +32,6 @@ jobs:
         with:
           node-version-file: frontend/.nvmrc
       - run: npm install --global npm@11.16.0
-      - run: npm ci --ignore-scripts --no-audit --no-fund
-      - run: npm test
       - run: rustup toolchain install 1.97.0 --profile minimal --component rustfmt --component clippy
       - run: cargo fmt --all -- --check
       - run: cargo check --locked --all-targets

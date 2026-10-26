@@ -10,7 +10,7 @@
 cargo run --locked
 ```
 
-独立迁移命令为 `cargo run --locked --bin work-orders-migrate`，导入前初始化可使用 `cargo run --locked --bin work-orders-migrate -- --import`。两种方式都只读取 `WORK_ORDERS_DATABASE_URL`，连接已创建的数据库、执行并核验原有正式迁移，然后关闭连接退出；不启动 HTTP，不要求平台或 CORS 配置，不创建数据库或角色，`--import` 不导入数据。工单没有 seed，`--seed` 会被拒绝；`--seed --import` 明确互斥，未知或重复参数也会在连接前失败。
+独立迁移命令为 `cargo run --locked --bin work-orders-migrate`，导入前初始化可使用 `cargo run --locked --bin work-orders-migrate -- --import`。两种方式都只读取 `WORK_ORDERS_DATABASE_URL`，连接已创建的数据库、执行并核验当前全新基线，然后关闭连接退出；不启动 HTTP，不要求平台或 CORS 配置，不创建数据库或角色，`--import` 不导入数据。工单没有 seed，`--seed` 会被拒绝；`--seed --import` 明确互斥，未知或重复参数也会在连接前失败。
 
 迁移命令拒绝 `PG*` 环境变量，避免驱动继承 URL 之外的端口、密码、证书或会话设置；数据库 TLS 仍通过 `WORK_ORDERS_DATABASE_URL` 的受支持参数配置。连接获取限时 5 秒，迁移限时 5 分钟，关闭连接限时 10 秒。先停用业务进程，由导入流程保持独占；该命令不提供数据导入互斥锁。默认 `cargo run --locked` 仍启动 `work-orders-api`。
 
@@ -49,10 +49,6 @@ cargo run --locked
 
 上游 HTTP 禁止重定向、环境代理和隐式请求重试，单次 JSON 最大 256 KiB。成员校验在释放业务连接后进行，随后用短事务复核并提交；提醒先持久化不可变事件并释放锁，再发布平台通知。[API 契约](API.md)记录并发、成员有效期和未知结果恢复要求。
 
-启动会验证实际 schema、历史 Node SHA-256 迁移记录和 SQLx 迁移历史。兼容既有合法工单库，拒绝不支持的对象、历史缺口或 checksum/schema 漂移。`migrations/0001_work_orders.sql`、`0002_create_idempotency.sql`、`0003_reminder_intents.sql` 是不可变增量，不能为了启动旧程序删除记录或篡改已执行 SQL。
-
-新增 `0004_uuid_v7.sql` 为全部 17 个 UUID 列追加 version 7／RFC variant 约束，兼容 PostgreSQL 17，Node 与 Rust 迁移锁及 checksum 合同共同扩展到第 4 版。应用显式生成 v7；Path、DTO、目录、提醒和过滤条件中的 typed ID 拒绝 v4、nil 与错误 variant，非法筛选不退化成无筛选。已有非 v7 业务数据会使新迁移原子失败，应先按平台 UUID 专项重编号并导入全新目标，再启动本版本，保留源库和原迁移记录。
-
 ## 代码与验证
 
 `src/http.rs` 定义路由、CORS、请求 ID 和 15 秒请求上限；`authorization/` 验证平台结果；`reads/`、`writes/`、`directory/`、`reminders/` 实现业务规则；`migrations/` 验证和迁移数据库；`telemetry.rs` 提供日志与私有指标。
@@ -67,8 +63,8 @@ cargo build --release --locked
 
 `tests/*.rs` 中需要隔离 PostgreSQL 的测试默认忽略，普通单元测试通过不代表这些测试通过。授权单元测试默认由 Rust 拥有 HTTP 监听；若本机阻止 Rust 测试进程接受连接，可显式设置 `WORK_ORDERS_TEST_NODE` 为已安装 Node 的路径，用专有 Node 监听转发到原 Axum 测试处理器。正式 reqwest、授权断言与生产路径不变，程序不会自动降级。详细运行条件见[开发指南](docs/development.md)。本目录可直接构建 API 镜像，Compose 只负责运行已经构建的镜像，见[部署指南](docs/deployment.md)。
 
-## 保留的 Node 兼容材料
+## 全新数据库基线
 
-`auth.mjs`、`db.mjs`、`server.mjs`、配置与 Node 测试用于历史行为比较及 Node → Rust 迁移验证。`index.mjs` 明确报告 `NODE_RUNTIME_RETIRED` 并退出；`npm start` 只是转发 `cargo run`。`config.env.example` 用于 Node 兼容测试，保留 `METRICS_TOKEN`、`NODE_EXTRA_CA_CERTS` 等 Node 名称，来源规则与 qiankun 一致；正式 Rust 服务使用 `config.rust.env.example`。
+仅使用 `migrations/0001_work_orders.sql` 初始化空库，不再兼容旧升级链或历史迁移记录。SQLx 只记录版本 1，并核对当前结构指纹；漂移或 checksum 不符拒绝启动。不会通过改写迁移历史或旧快照签认现状。UUIDv7、当前身份/不可变约束、幂等与业务审计在首次建表时全部建立。
 
-先运行 `npm ci --ignore-scripts --no-audit --no-fund`，再用 `npm test` 执行 `tests/*.test.mjs`。数据库验收测试会按自身条件跳过，不能把跳过计为通过。
+系统与其他服务的数据归属见[全新安装](../../saas-plateform/backend/docs/fresh-installation.md)。

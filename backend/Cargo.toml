@@ -3,7 +3,7 @@ name = "work-orders-api"
 default-run = "work-orders-api"
 version = "0.1.0"
 edition = "2021"
-description = "Independent Rust work-order API and safe business database baseline takeover"
+description = "Independent Rust work-order API and fresh business database initialization"
 publish = false
 
 [dependencies]

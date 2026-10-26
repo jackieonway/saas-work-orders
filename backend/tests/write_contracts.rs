@@ -59,7 +59,21 @@ where
         owner.starts_with("ci-") && owner.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
     );
     let mut url = url::Url::parse(&raw).expect("valid owned URL");
-    assert_eq!(url.host_str(), Some(format!("{owner}-postgres").as_str()));
+    let local = std::env::var("WORK_ORDERS_TEST_LOCAL_POSTGRES_OWNER").ok();
+    let owned = match local.as_deref() {
+        None => url.host_str() == Some(format!("{owner}-postgres").as_str()),
+        Some(value) => {
+            matches!(url.host_str(), Some("127.0.0.1" | "[::1]"))
+                && url.port().is_some_and(|p| p >= 1024 && p != 5432)
+                && value
+                    == format!(
+                        "{owner}@{}:{}",
+                        url.host_str().unwrap(),
+                        url.port().unwrap()
+                    )
+        }
+    };
+    assert!(owned, "explicit test database ownership required");
     assert_eq!(url.path(), "/postgres");
     let admin = PgPoolOptions::new()
         .max_connections(2)
