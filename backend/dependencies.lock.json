@@ -9,7 +9,7 @@
     "backend/vendor/operational-telemetry/src/lib.rs": "ae4fa26581d616e9301a5ed167dcea1a56c50a224e29a6c068a4248b7ec3900c",
     "frontend/vendor/vue.global.prod.js": "b72394052eef1eeda1752db3758ce1be6f88016903f22e5241cc732ea307478e",
     "frontend/vendor/vue.LICENSE.txt": "ea4239d56944b8a5881124cf2804b95ba2bf2cb98029623b1858722bbc5b0e3e",
-    "backend/manifests/bootstrap.manifest.json": "c131c7b9d36b93821d3b65d22e9312b1db30e156c093a8763382d3ffdbe275ec",
+    "backend/manifests/bootstrap.manifest.json": "1498582fd459301861571a4cb926dcdc96119326aafcaace6c2f4f65a83df557",
     "frontend/deploy/build-static.mjs": "ed18e010960ccd64a655665f29405a0ae6fb89ef9fdda33bab18aff7e6355503",
     "frontend/deploy/gateway-policy.mjs": "3fdd1d69f7898706f34a5faadfc22e6356a57fc8ddabcf5d505ea6729d00c5cc",
     "backend/manifests/grants.manifest.example.json": "d281fa3a0cc107eb51e33e56fda0c8f2b101c9c6c89a76db15dde89bda6d2e63",
