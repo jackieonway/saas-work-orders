@@ -59,7 +59,7 @@ pub fn router(pool: PgPool, health_timeout: Duration) -> Router {
 ///
 /// Call [`crate::initialize_database`] first. Unlike [`router`]'s compatibility
 /// health surface, this requires complete validated platform client settings.
-/// Each protected request obtains fresh introspection and application context;
+/// Each protected request obtains fresh private resource authorization;
 /// the client secret remains in the private server-side client.
 pub fn application(config: &Config, pool: PgPool) -> Result<Router, ServiceError> {
     let authorizer = Authorizer::new(config)?;
@@ -309,13 +309,21 @@ async fn delete(
     let Some(authorizer) = &state.authorizer else {
         return Ok(business_unavailable().await);
     };
-    let auth = authorizer
-        .authorize(bearer(request.headers())?, Action::Delete, &id.0)
-        .await?;
+    let token = bearer(request.headers())?.to_owned();
+    let auth = authorizer.authorize(&token, Action::Delete, &id.0).await?;
     let Path(ticket_id) = path.map_err(|_| ApiError::validation())?;
     no_query(&request)?;
     let body = write_body(request, &state).await?;
-    crate::writes::delete(&state.pool, &auth, &ticket_id, &body).await?;
+    crate::writes::delete(
+        &state.pool,
+        &auth,
+        &ticket_id,
+        &body,
+        authorizer,
+        &token,
+        &id.0,
+    )
+    .await?;
     Ok(Json(serde_json::json!({ "ok": true })).into_response())
 }
 

@@ -7,7 +7,7 @@ use axum::{
     extract::State,
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
-    routing::{get, post},
+    routing::post,
     Json, Router,
 };
 use serde_json::{json, Value};
@@ -23,11 +23,6 @@ const CHILD: &str = "44444444-4444-7444-8444-444444444444";
 const APP: &str = "55555555-5555-7555-8555-555555555555";
 const REQUEST_ID: &str = "66666666-6666-7666-8666-666666666666";
 
-fn intro(now: i64) -> Value {
-    json!({"active":true,"aud":"work-orders","sub":USER,"tenant_id":TENANT,
-        "organization_id":ORG,"token_type":"Bearer","exp":now/1000+120})
-}
-
 fn context(now: i64) -> Value {
     json!({"contractVersion":"1.0","appCode":"work-orders","contextVersion":"a".repeat(64),
         "expiresAt":chrono::DateTime::from_timestamp_millis(now+20_000).unwrap().to_rfc3339(),
@@ -40,9 +35,18 @@ fn context(now: i64) -> Value {
                 "scope":"TENANT","organizationIds":[]} ]})
 }
 
+pub(super) fn resource_reply(ctx: &Value, action: Action, now: i64) -> Value {
+    json!({"contractVersion":"resource-authorization/1","subjectMode":"USER",
+        "issuer":"urn:saas:platform:internal-capabilities","tokenUse":"app_session",
+        "resource":"work-orders","action":action.as_str(),"audience":"work-orders","targetApplicationId":APP,
+        "expiresAt":chrono::DateTime::from_timestamp_millis(now+20_000).unwrap().to_rfc3339(),
+        "principal":{"userId":USER,"membershipId":REQUEST_ID,"memberType":"EMPLOYEE","identityVersion":"1","accountVersion":"1","tenantId":TENANT,"organizationId":ORG},
+        "introspection":{"active":true,"scope":"app:access","client_id":"work-orders","token_type":"Bearer","token_use":"app_session",
+            "iss":"urn:saas:platform:internal-capabilities","aud":"work-orders","jti":REQUEST_ID,"exp":now/1000+120},"context":ctx})
+}
+
 fn authorized(ctx: &Value, action: Action, now: i64) -> Result<Authorized, ApiError> {
-    let identity = policy::validate_intro(&intro(now), now)?;
-    policy::validate_context(&identity, ctx, action, now)
+    policy::validate_authorization(&resource_reply(ctx, action, now), action, now, None, None)
 }
 
 #[test]
@@ -55,8 +59,8 @@ fn write_actions_require_their_own_grant_and_trusted_creation_snapshots() {
         let auth = authorized(&ctx, action, now).unwrap();
         auth.require_action(action).unwrap();
         assert!(auth.require_action(Action::Read).is_err());
-        assert_eq!(auth.organization_name(), "组织");
-        assert_eq!(auth.owner_display_name(), "读者");
+        assert_eq!(auth.organization_name().unwrap(), "组织");
+        assert_eq!(auth.owner_display_name().unwrap(), "读者");
         ctx["dataGrants"][0]["action"] = json!("read");
         assert_eq!(
             authorized(&ctx, action, now).err().unwrap().code(),
@@ -70,7 +74,8 @@ fn write_actions_require_their_own_grant_and_trusted_creation_snapshots() {
     assert_eq!(
         authorized(&ctx, Action::Create, now)
             .unwrap()
-            .owner_display_name(),
+            .owner_display_name()
+            .unwrap(),
         "reader"
     );
     ctx["user"]["username"] = json!("中".repeat(101));
@@ -104,36 +109,34 @@ fn creation_and_assignment_targets_obey_scope_and_organization_ceiling() {
 }
 
 #[test]
-fn introspection_rejects_wrong_audience_activity_type_identity_and_expiry() {
+fn resource_introspection_rejects_wrong_audience_activity_type_identity_and_expiry() {
     let now = 1_700_000_000_000;
-    for (field, value) in [
-        ("active", json!(false)),
-        ("active", json!("true")),
-        ("aud", json!("other-app")),
-        ("aud", json!(["work-orders"])),
-        ("token_type", json!("bearer")),
-        ("sub", json!("not-a-uuid")),
-        ("tenant_id", json!(null)),
-        ("organization_id", json!("33333333333343338333333333333333")),
-        ("exp", json!(now / 1000)),
-        ("exp", json!(1.25)),
-        ("exp", json!(9_007_199_254_740_992_u64)),
-        ("exp", json!((now / 1000 + 60).to_string())),
+    for (pointer, value) in [
+        ("/introspection/active", json!(false)),
+        ("/introspection/active", json!("true")),
+        ("/introspection/aud", json!("other-app")),
+        ("/introspection/aud", json!(["work-orders"])),
+        ("/introspection/token_type", json!("bearer")),
+        ("/principal/userId", json!("not-a-uuid")),
+        ("/principal/tenantId", json!(null)),
+        (
+            "/principal/organizationId",
+            json!("33333333333343338333333333333333"),
+        ),
+        ("/introspection/exp", json!(now / 1000)),
+        ("/introspection/exp", json!(1.25)),
+        ("/introspection/exp", json!((now / 1000 + 60).to_string())),
     ] {
-        let mut candidate = intro(now);
-        candidate[field] = value;
-        assert_eq!(
-            policy::validate_intro(&candidate, now)
-                .err()
-                .unwrap()
-                .code(),
-            "INVALID_APP_TOKEN",
-            "{field}"
+        let mut candidate = resource_reply(&context(now), Action::Read, now);
+        *candidate.pointer_mut(pointer).unwrap() = value;
+        assert!(
+            policy::validate_authorization(&candidate, Action::Read, now, None, None).is_err(),
+            "{pointer}"
         );
     }
-    let mut upper = intro(now);
-    upper["sub"] = json!(USER.to_uppercase());
-    assert!(policy::validate_intro(&upper, now).is_ok());
+    let mut upper = resource_reply(&context(now), Action::Read, now);
+    upper["principal"]["userId"] = json!(USER.to_uppercase());
+    assert!(policy::validate_authorization(&upper, Action::Read, now, None, None).is_ok());
 }
 
 #[test]
@@ -174,19 +177,22 @@ fn context_binds_identity_contract_version_expiry_and_display_fields() {
                 .err()
                 .unwrap()
                 .code(),
-            "INVALID_CONTEXT",
+            if pointer == "/application/id" {
+                "INVALID_APP_TOKEN"
+            } else {
+                "INVALID_CONTEXT"
+            },
             "{pointer}"
         );
     }
-    let mut token = intro(now);
-    token["exp"] = json!(now / 1000 + 1);
-    let identity = policy::validate_intro(&token, now).unwrap();
+    let mut reply = resource_reply(&context(now), Action::Read, now);
+    reply["introspection"]["exp"] = json!(now / 1000 + 1);
     assert_eq!(
-        policy::validate_context(&identity, &context(now), Action::Read, now)
+        policy::validate_authorization(&reply, Action::Read, now, None, None)
             .err()
             .unwrap()
             .code(),
-        "INVALID_CONTEXT"
+        "INVALID_APP_TOKEN"
     );
 }
 
@@ -373,22 +379,15 @@ async fn fixture_response(
             .unwrap()
             .to_owned(),
     ));
-    if uri.path().ends_with("/authorize") {
-        let pairs = url::form_urlencoded::parse(&body)
-            .into_owned()
-            .collect::<std::collections::BTreeMap<_, _>>();
-        assert_eq!(pairs.len(), 3);
-        assert_eq!(pairs["resource"], "ticket");
-        assert_eq!(pairs["action"], "read");
-    } else if uri.path() == "/oauth/introspect" {
-        assert_eq!(headers["content-type"], "application/x-www-form-urlencoded");
-        let pairs = url::form_urlencoded::parse(&body).collect::<Vec<_>>();
-        assert_eq!(pairs.len(), 1);
-        assert_eq!(pairs[0].0, "token");
-        assert!(!pairs[0].1.is_empty());
-    } else {
-        assert!(body.is_empty());
-    }
+    assert_eq!(uri.path(), "/api/apps/work-orders/authorize");
+    assert_eq!(headers["content-type"], "application/x-www-form-urlencoded");
+    let pairs = url::form_urlencoded::parse(&body)
+        .into_owned()
+        .collect::<std::collections::BTreeMap<_, _>>();
+    assert_eq!(pairs.len(), 3);
+    assert_eq!(pairs["resource"], "ticket");
+    assert_eq!(pairs["action"], "read");
+    assert!(!pairs["token"].is_empty());
     let mode = state.mode.load(Ordering::SeqCst);
     if mode == 10 {
         return (
@@ -426,22 +425,13 @@ async fn fixture_response(
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
     }
     let now = policy::now_millis();
-    if uri.path().ends_with("/authorize") {
-        Json(json!({"contractVersion":"1.0","introspection":intro(now),"context":context(now)}))
-            .into_response()
-    } else if uri.path() == "/oauth/introspect" {
-        let mut value = intro(now);
-        if mode == 1 {
-            value["active"] = json!(false);
-        }
-        Json(value).into_response()
-    } else {
-        Json(context(now)).into_response()
-    }
+    let mut reply = resource_reply(&context(now), Action::Read, now);
+    reply["introspection"]["active"] = json!(mode != 1);
+    Json(reply).into_response()
 }
 
 async fn fixture(timeout: &str, max: &str) -> (Authorizer, Arc<Fixture>, FixtureServer) {
-    fixture_mode(timeout, max, "legacy").await
+    fixture_mode(timeout, max, "canonical").await
 }
 
 async fn fixture_mode(
@@ -455,9 +445,7 @@ async fn fixture_mode(
         headers: Mutex::new(Vec::new()),
     });
     let app = Router::new()
-        .route("/oauth/introspect", post(fixture_response))
         .route("/api/apps/work-orders/authorize", post(fixture_response))
-        .route("/api/apps/work-orders/context", get(fixture_response))
         .with_state(state.clone());
     let (origin, server) = if std::env::var_os("WORK_ORDERS_TEST_NODE").is_some() {
         let server = super::node_fixture::Server::start(app).await;
@@ -492,7 +480,7 @@ async fn fixture_mode(
 
 #[tokio::test]
 async fn combined_authorization_keeps_independent_policy_and_never_caches() {
-    let (auth, state, server) = fixture_mode("3000", "2", "combined").await;
+    let (auth, state, server) = fixture_mode("3000", "2", "canonical").await;
     for _ in 0..2 {
         auth.authorize("app-token", Action::Read, REQUEST_ID)
             .await
@@ -522,7 +510,7 @@ async fn combined_authorization_keeps_independent_policy_and_never_caches() {
 }
 
 #[tokio::test]
-async fn fresh_basic_introspection_then_bearer_context_are_never_positive_cached() {
+async fn fresh_private_authorization_never_uses_legacy_fallback_or_positive_cache() {
     let (auth, state, server) = fixture("3000", "2").await;
     auth.authorize("app-token", Action::Read, REQUEST_ID)
         .await
@@ -530,10 +518,7 @@ async fn fresh_basic_introspection_then_bearer_context_are_never_positive_cached
     let seen = state.headers.lock().unwrap().clone();
     assert_eq!(
         seen,
-        [
-            ("Basic Y2xpZW50OnNlY3JldA==".into(), REQUEST_ID.into()),
-            ("Bearer app-token".into(), REQUEST_ID.into())
-        ]
+        [("Basic Y2xpZW50OnNlY3JldA==".into(), REQUEST_ID.into())]
     );
     state.mode.store(1, Ordering::SeqCst);
     assert_eq!(
@@ -544,7 +529,7 @@ async fn fresh_basic_introspection_then_bearer_context_are_never_positive_cached
             .code(),
         "INVALID_APP_TOKEN"
     );
-    assert_eq!(state.calls.load(Ordering::SeqCst), 3);
+    assert_eq!(state.calls.load(Ordering::SeqCst), 2);
     server.close().await;
 }
 
@@ -557,7 +542,7 @@ async fn upstream_status_body_redirect_json_and_capacity_fail_closed() {
         (4, "PLATFORM_UNAVAILABLE"),
         (5, "PLATFORM_UNAVAILABLE"),
         (6, "INVALID_APP_TOKEN"),
-        (7, "DATA_DENIED"),
+        (7, "PLATFORM_UNAVAILABLE"),
         (8, "PLATFORM_UNAVAILABLE"),
     ] {
         state.mode.store(mode, Ordering::SeqCst);

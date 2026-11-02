@@ -63,8 +63,8 @@ fn receipt_response(
     for (field, expected) in [
         ("id", ticket_id),
         ("tenantId", auth.tenant_id()),
-        ("organizationId", auth.organization_id()),
-        ("ownerUserId", auth.user_id()),
+        ("organizationId", auth.organization_id()?),
+        ("ownerUserId", auth.user_id()?),
     ] {
         if value.get(field).and_then(serde_json::Value::as_str)
             != Some(expected.to_string().as_str())
@@ -91,8 +91,8 @@ async fn completed_receipt(
     );
     let row = sqlx::query(&sql)
         .bind(auth.tenant_id())
-        .bind(auth.organization_id())
-        .bind(auth.user_id())
+        .bind(auth.organization_id()?)
+        .bind(auth.user_id()?)
         .bind(key)
         .fetch_optional(pool)
         .await
@@ -133,7 +133,7 @@ pub(crate) async fn create(
 ) -> Result<Ticket, ApiError> {
     auth.require_action(Action::Create)?;
     auth.assert_fresh()?;
-    auth.require_organization(auth.organization_id())?;
+    auth.require_organization(auth.organization_id()?)?;
     dto::idempotency_key(idempotency_key)?;
     let body = dto::create(body)?;
     let request_hash = dto::fingerprint(&body)?;
@@ -144,7 +144,7 @@ pub(crate) async fn create(
         .transpose()?;
     let verified = if let Some(user) = assignee {
         if let Some(ticket) = completed_receipt(pool, auth, idempotency_key, &request_hash).await? {
-            auth.assert_fresh()?;
+            authorizer.recheck(auth, token, request_id).await?;
             return Ok(ticket);
         }
         Some(
@@ -152,7 +152,7 @@ pub(crate) async fn create(
                 .member(
                     auth,
                     token,
-                    auth.organization_id(),
+                    auth.organization_id()?,
                     user,
                     Action::Create,
                     request_id,
@@ -163,6 +163,8 @@ pub(crate) async fn create(
         None
     };
 
+    let checked = authorizer.recheck(auth, token, request_id).await?;
+    let auth = &checked;
     let mut transaction = crate::telemetry::begin(pool)
         .await
         .map_err(database_error)?;
@@ -176,8 +178,8 @@ pub(crate) async fn create(
          ON CONFLICT(tenant_id,organization_id,user_id,action,idempotency_key) DO NOTHING",
     )
     .bind(auth.tenant_id())
-    .bind(auth.organization_id())
-    .bind(auth.user_id())
+    .bind(auth.organization_id()?)
+    .bind(auth.user_id()?)
     .bind(idempotency_key)
     .bind(&request_hash)
     .execute(&mut *transaction)
@@ -193,14 +195,14 @@ pub(crate) async fn create(
     );
     let receipt = sqlx::query(&receipt_sql)
         .bind(auth.tenant_id())
-        .bind(auth.organization_id())
-        .bind(auth.user_id())
+        .bind(auth.organization_id()?)
+        .bind(auth.user_id()?)
         .bind(idempotency_key)
         .fetch_one(&mut *transaction)
         .await
         .map_err(database_error)?;
     auth.assert_fresh()?;
-    auth.require_organization(auth.organization_id())?;
+    auth.require_organization(auth.organization_id()?)?;
     let stored_hash: String = receipt.try_get("request_hash").map_err(database_error)?;
     if stored_hash != request_hash {
         return Err(idempotency_conflict());
@@ -235,7 +237,7 @@ pub(crate) async fn create(
     let assert_assignment = || {
         auth.assert_fresh()?;
         if let (Some(member), Some(user)) = (&verified, assignee) {
-            member.assert_for(auth, auth.organization_id(), user, Action::Create)?;
+            member.assert_for(auth, auth.organization_id()?, user, Action::Create)?;
         }
         Ok::<(), ApiError>(())
     };
@@ -261,10 +263,10 @@ pub(crate) async fn create(
         .bind(ticket_id)
         .bind(format!("WO-{number:06}"))
         .bind(auth.tenant_id())
-        .bind(auth.organization_id())
-        .bind(auth.organization_name())
-        .bind(auth.user_id())
-        .bind(auth.owner_display_name())
+        .bind(auth.organization_id()?)
+        .bind(auth.organization_name()?)
+        .bind(auth.user_id()?)
+        .bind(auth.owner_display_name()?)
         .bind(&body.title)
         .bind(&body.description)
         .bind(body.priority.as_str())
@@ -285,8 +287,8 @@ pub(crate) async fn create(
     );
     let updated = sqlx::query(&complete_sql)
         .bind(auth.tenant_id())
-        .bind(auth.organization_id())
-        .bind(auth.user_id())
+        .bind(auth.organization_id()?)
+        .bind(auth.user_id()?)
         .bind(idempotency_key)
         .bind(ticket_id)
         .bind(response)
@@ -379,6 +381,7 @@ pub(crate) async fn update(
     request_id: &str,
 ) -> Result<Ticket, ApiError> {
     auth.require_action(Action::Update)?;
+    auth.require_person()?;
     auth.assert_fresh()?;
     let id = dto::canonical_uuid(id)?;
     let body = dto::update(body)?;
@@ -416,6 +419,8 @@ pub(crate) async fn update(
             );
         }
     }
+    let checked = authorizer.recheck(auth, token, request_id).await?;
+    let auth = &checked;
     let mut transaction = crate::telemetry::begin(pool)
         .await
         .map_err(database_error)?;
@@ -509,11 +514,17 @@ pub(crate) async fn delete(
     auth: &Authorized,
     id: &str,
     body: &[u8],
+    authorizer: &Authorizer,
+    token: &str,
+    request_id: &str,
 ) -> Result<(), ApiError> {
     auth.require_action(Action::Delete)?;
+    auth.require_person()?;
     auth.assert_fresh()?;
     let id = dto::canonical_uuid(id)?;
     let body = dto::delete(body)?;
+    let checked = authorizer.recheck(auth, token, request_id).await?;
+    let auth = &checked;
     let mut transaction = crate::telemetry::begin(pool)
         .await
         .map_err(database_error)?;

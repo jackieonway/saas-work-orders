@@ -46,7 +46,8 @@ pub struct Config {
 
 #[derive(Clone)]
 pub(crate) struct PlatformConfig {
-    pub(crate) legacy_authorization: bool,
+    pub(crate) identity_issuer: Option<String>,
+    pub(crate) scope_bindings: BTreeMap<String, String>,
     pub(crate) origin: Url,
     pub(crate) client_id: String,
     pub(crate) client_secret: String,
@@ -187,6 +188,8 @@ fn platform_config(
         "PLATFORM_AUTH_TIMEOUT_MS",
         "PLATFORM_AUTH_MAX_CONCURRENT",
         "PLATFORM_AUTHORIZATION_MODE",
+        "PLATFORM_IDENTITY_ISSUER",
+        "PLATFORM_RESOURCE_SCOPE_BINDINGS",
         "PLATFORM_CA_CERT_FILE",
     ];
     if !names.iter().any(|name| get(name).is_some()) {
@@ -215,16 +218,26 @@ fn platform_config(
     {
         return Err(ConfigError::PlatformClientSecret);
     }
-    let legacy_authorization = match get("PLATFORM_AUTHORIZATION_MODE")
-        .as_deref()
-        .unwrap_or("combined")
-    {
-        "combined" => false,
-        "legacy" => true,
-        _ => return Err(ConfigError::AuthorizationMode),
-    };
+    if get("PLATFORM_AUTHORIZATION_MODE").is_some_and(|value| value != "canonical") {
+        return Err(ConfigError::AuthorizationMode);
+    }
+    let identity_issuer = get("PLATFORM_IDENTITY_ISSUER")
+        .map(|value| {
+            let parsed =
+                exact_origin(&value, true).map_err(|_| ConfigError::PlatformIdentityIssuer)?;
+            if parsed.path() != "/" {
+                return Err(ConfigError::PlatformIdentityIssuer);
+            }
+            Ok(value)
+        })
+        .transpose()?;
+    let scope_bindings = get("PLATFORM_RESOURCE_SCOPE_BINDINGS")
+        .map(|value| parse_scope_bindings(&value))
+        .transpose()?
+        .unwrap_or_default();
     Ok(Some(PlatformConfig {
-        legacy_authorization,
+        identity_issuer,
+        scope_bindings,
         origin,
         client_id,
         client_secret,
@@ -240,6 +253,53 @@ fn platform_config(
             })
             .transpose()?,
     }))
+}
+
+fn parse_scope_bindings(raw: &str) -> Result<BTreeMap<String, String>, ConfigError> {
+    struct Bindings;
+    impl<'de> serde::de::Visitor<'de> for Bindings {
+        type Value = BTreeMap<String, String>;
+        fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.write_str("unique resource scope bindings")
+        }
+        fn visit_map<M: serde::de::MapAccess<'de>>(
+            self,
+            mut map: M,
+        ) -> Result<Self::Value, M::Error> {
+            let mut bindings = BTreeMap::new();
+            while let Some((key, value)) = map.next_entry::<String, String>()? {
+                if !matches!(
+                    key.as_str(),
+                    "ticket:read"
+                        | "ticket:export"
+                        | "ticket:create"
+                        | "ticket:update"
+                        | "ticket:delete"
+                        | "notification:publish"
+                ) || bindings.contains_key(&key)
+                    || value.is_empty()
+                    || value.len() > 128
+                    || !value.as_bytes()[0].is_ascii_lowercase()
+                    || !value.bytes().all(|c| {
+                        c.is_ascii_lowercase() || c.is_ascii_digit() || b"._:-".contains(&c)
+                    })
+                {
+                    return Err(serde::de::Error::custom("invalid resource scope binding"));
+                }
+                bindings.insert(key, value);
+            }
+            Ok(bindings)
+        }
+    }
+    use serde::de::Deserializer;
+    let mut deserializer = serde_json::Deserializer::from_str(raw);
+    let value = deserializer
+        .deserialize_map(Bindings)
+        .map_err(|_| ConfigError::ResourceScopeBindings)?;
+    deserializer
+        .end()
+        .map_err(|_| ConfigError::ResourceScopeBindings)?;
+    Ok(value)
 }
 
 impl fmt::Debug for Config {
@@ -487,18 +547,14 @@ mod tests {
         let settings = cfg.platform.as_ref().unwrap();
         assert_eq!(settings.timeout, Duration::from_millis(3000));
         assert_eq!(settings.max_concurrent, 32);
-        assert!(!settings.legacy_authorization);
-        for (mode, legacy) in [("combined", false), ("legacy", true)] {
+        assert!(settings.identity_issuer.is_none());
+        let mut canonical = complete.to_vec();
+        canonical.push(("PLATFORM_AUTHORIZATION_MODE", "canonical"));
+        assert!(config(&canonical).is_ok());
+        for mode in ["combined", "legacy", "automatic"] {
             let mut values = complete.to_vec();
             values.push(("PLATFORM_AUTHORIZATION_MODE", mode));
-            assert_eq!(
-                config(&values)
-                    .unwrap()
-                    .platform
-                    .unwrap()
-                    .legacy_authorization,
-                legacy
-            );
+            assert!(config(&values).is_err());
         }
         assert_eq!(cfg.allowed_origins, ["https://platform.example.test"]);
         assert!(!format!("{cfg:?} {settings:?}").contains("PRIVATE_CLIENT_SECRET"));
@@ -518,6 +574,59 @@ mod tests {
             let error = config(&values).unwrap_err();
             assert!(!format!("{error} {error:?}").contains("PRIVATE_CLIENT_SECRET"));
         }
+    }
+
+    #[test]
+    fn canonical_identity_issuer_and_explicit_scope_bindings_are_unambiguous() {
+        let complete = [
+            ("PLATFORM_API_ORIGIN", "https://private-platform.test:24444"),
+            ("PLATFORM_CLIENT_ID", "work-orders-service"),
+            ("PLATFORM_CLIENT_SECRET", "PRIVATE_CONFIG_CANARY"),
+            ("PLATFORM_IDENTITY_ISSUER", "https://auth.saas.test"),
+            (
+                "PLATFORM_RESOURCE_SCOPE_BINDINGS",
+                r#"{"ticket:read":"tickets:approved-read"}"#,
+            ),
+        ];
+        let settings = config(&complete).unwrap().platform.unwrap();
+        assert_eq!(
+            settings.identity_issuer.as_deref(),
+            Some("https://auth.saas.test")
+        );
+        assert_eq!(
+            settings
+                .scope_bindings
+                .get("ticket:read")
+                .map(String::as_str),
+            Some("tickets:approved-read")
+        );
+        assert!(!settings.scope_bindings.contains_key("ticket:create"));
+        for issuer in [
+            "http://127.0.0.1:23441",
+            "https://auth.saas.test/",
+            "https://auth.saas.test/path",
+            "https://user:secret@auth.saas.test",
+            "https://auth.saas.test?x=1",
+            "",
+        ] {
+            let mut values = complete.to_vec();
+            values.retain(|(name, _)| *name != "PLATFORM_IDENTITY_ISSUER");
+            values.push(("PLATFORM_IDENTITY_ISSUER", issuer));
+            assert!(config(&values).is_err());
+        }
+        for bindings in [
+            r#"{"ticket:read":"a","ticket:read":"b"}"#,
+            r#"{"ticket:unknown":"a"}"#,
+            r#"{"ticket:read":"scope with space"}"#,
+            r#"{"ticket:read":"UPPER"}"#,
+            r#"{"ticket:read":null}"#,
+            "[]",
+            "{} {}",
+        ] {
+            assert!(parse_scope_bindings(bindings).is_err());
+        }
+        assert!(parse_scope_bindings("{}").unwrap().is_empty());
+        assert!(!format!("{settings:?}").contains("PRIVATE_CONFIG_CANARY"));
     }
 
     #[test]

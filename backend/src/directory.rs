@@ -55,9 +55,9 @@ impl VerifiedMember {
         auth.require_action(action)?;
         auth.require_organization(organization)?;
         if !self.matches(
-            auth.user_id(),
+            auth.user_id()?,
             auth.tenant_id(),
-            auth.organization_id(),
+            auth.organization_id()?,
             organization,
             user,
             action,
@@ -187,7 +187,9 @@ pub(crate) async fn list(
     let auth = authorizer
         .authorize(token, query.action, request_id)
         .await?;
-    let organization = query.organization.unwrap_or_else(|| auth.organization_id());
+    let organization = query
+        .organization
+        .map_or_else(|| auth.organization_id(), Ok)?;
     auth.require_organization(organization)?;
     let lookup = MemberListQuery {
         organization,
@@ -223,9 +225,9 @@ impl Authorizer {
             return Err(ApiError::platform_unavailable());
         }
         let result = VerifiedMember {
-            actor: auth.user_id(),
+            actor: auth.user_id()?,
             tenant: auth.tenant_id(),
-            current_organization: auth.organization_id(),
+            current_organization: auth.organization_id()?,
             action,
             organization,
             user,

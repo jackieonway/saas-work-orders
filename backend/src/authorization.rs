@@ -37,6 +37,24 @@ pub(crate) struct Authorizer {
 }
 
 impl Authorizer {
+    /// Recheck the same original token/operation without a business connection.
+    /// A changed principal, source generation or grant cannot replace the
+    /// original authorization while a local write is being prepared.
+    pub(crate) async fn recheck(
+        &self,
+        original: &Authorized,
+        token: &str,
+        request_id: &str,
+    ) -> Result<Authorized, ApiError> {
+        original.assert_fresh()?;
+        let mut current = self.authorize(token, original.action(), request_id).await?;
+        if !original.same_authority(&current) {
+            return Err(ApiError::invalid_context());
+        }
+        current.retain_deadline(original);
+        current.assert_fresh()?;
+        Ok(current)
+    }
     pub(crate) fn new(config: &Config) -> Result<Self, ServiceError> {
         let settings = config.platform.as_ref().ok_or_else(|| {
             ServiceError::caused_by(
@@ -51,7 +69,7 @@ impl Authorizer {
         })
     }
 
-    /// The permit covers both HTTP calls and their bounded bodies. Saturated
+    /// The permit covers the private authorization call and its bounded body. Saturated
     /// callers fail immediately, so incoming requests cannot form an unbounded
     /// queue of authorization futures or hold a database transaction while waiting.
     pub(crate) async fn authorize(
@@ -81,12 +99,17 @@ impl Authorizer {
             .try_acquire_owned()
             .map_err(|_| ApiError::platform_unavailable())?;
         tokio::time::timeout(self.timeout, async {
-            let (intro, context) = self
+            let reply = self
                 .client
-                .authorization_pair(token, "ticket", action.as_str(), request_id)
+                .authorization(token, "ticket", action.as_str(), request_id)
                 .await?;
-            let identity = policy::validate_intro(&intro, policy::now_millis())?;
-            policy::validate_context(&identity, &context, action, policy::now_millis())
+            policy::validate_authorization(
+                &reply,
+                action,
+                policy::now_millis(),
+                self.client.identity_issuer(),
+                self.client.required_scope(action),
+            )
         })
         .await
         .map_err(|_| ApiError::platform_unavailable())?
@@ -106,12 +129,17 @@ impl Authorizer {
             .try_acquire_owned()
             .map_err(|_| ApiError::platform_unavailable())?;
         tokio::time::timeout(self.timeout, async {
-            let (intro, context) = self
+            let reply = self
                 .client
-                .authorization_pair(token, "ticket", "read", request_id)
+                .authorization(token, "ticket", "read", request_id)
                 .await?;
-            let identity = policy::validate_intro(&intro, policy::now_millis())?;
-            policy::validate_reminder(&identity, &context, policy::now_millis())
+            policy::validate_reminder_authorization(
+                &reply,
+                policy::now_millis(),
+                self.client.identity_issuer(),
+                self.client.required_scope(Action::Read),
+                self.client.notification_scope(),
+            )
         })
         .await
         .map_err(|_| ApiError::platform_unavailable())?
@@ -133,7 +161,7 @@ impl Authorizer {
             .map_err(|_| ApiError::platform_unavailable())?;
         auth.assert_fresh()?;
         let result = tokio::time::timeout(
-            self.timeout,
+            self.timeout.min(Duration::from_secs(3)),
             self.client
                 .publish_reminder(token, json, request_id, attempt),
         )
@@ -167,7 +195,7 @@ impl Authorizer {
             .clone()
             .try_acquire_owned()
             .map_err(|_| ApiError::platform_unavailable())?;
-        let value = tokio::time::timeout_at(
+        let (value, server_deadline) = tokio::time::timeout_at(
             tokio::time::Instant::from_std(deadline),
             self.client
                 .member(token, organization, user, action, request_id),
@@ -175,7 +203,7 @@ impl Authorizer {
         .await
         .map_err(|_| ApiError::platform_unavailable())??;
         auth.assert_fresh()?;
-        Ok((value, deadline))
+        Ok((value, deadline.min(server_deadline)))
     }
 
     pub(crate) async fn list_members_response(
@@ -191,11 +219,14 @@ impl Authorizer {
             .clone()
             .try_acquire_owned()
             .map_err(|_| ApiError::platform_unavailable())?;
-        let value =
+        let (value, server_deadline) =
             tokio::time::timeout(self.timeout, self.client.members(token, query, request_id))
                 .await
                 .map_err(|_| ApiError::platform_unavailable())??;
         auth.assert_fresh()?;
+        if Instant::now() >= server_deadline {
+            return Err(ApiError::platform_unavailable());
+        }
         Ok(value)
     }
 }
@@ -228,7 +259,9 @@ impl Authorized {
         }
         match self.scope() {
             Scope::SelfOnly => {
-                query.push(" AND owner_user_id=").push_bind(self.user_id());
+                query
+                    .push(" AND owner_user_id=")
+                    .push_bind(self.filter_user());
                 if !self.grant_organization_ids().is_empty() {
                     query
                         .push(" AND organization_id=ANY(")
@@ -239,7 +272,7 @@ impl Authorized {
             Scope::Org => {
                 query
                     .push(" AND organization_id=")
-                    .push_bind(self.organization_id());
+                    .push_bind(self.filter_organization());
             }
             Scope::OrgSubtree => {
                 query

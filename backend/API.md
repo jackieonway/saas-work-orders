@@ -1,10 +1,14 @@
 # 工单 API 契约
 
-以下契约对应正式 Rust 服务，前缀统一为 `/work-orders-api`。路由定义在 `src/http.rs`，DTO 与领域规则分别在 `reads/`、`writes/`、`directory/`、`reminders/`；Node 兼容实现不能替代该接口说明。
+以下契约对应正式 Rust 服务，前缀统一为 `/work-orders-api`。路由定义在 `src/http.rs`，DTO 与领域规则分别在 `reads/`、`writes/`、`directory/`、`reminders/`。
 
 ## 身份、请求与响应约束
 
 受保护请求使用单个 `Authorization: Bearer <当前应用token>`，应用身份固定为 `work-orders`。不通过 Cookie、前端传入的租户 ID 或客户端显示名称获得业务身份。后端每次重新验证平台 token 与授权上下文，校验应用、用户、租户、组织、功能权限、资源动作数据授权和有效期限。
+
+API 接受平台签发的内部 `app_session` 或 canonical OAuth `access_token`，统一通过私有 `resource-authorization/1` 验证。外部 issuer 必须等于 `PLATFORM_IDENTITY_ISSUER`，资源／audience 必须为 `work-orders`，当前 `ticket:action` 必须有 `PLATFORM_RESOURCE_SCOPE_BINDINGS` 的准确已审核 scope；内部凭据仅使用固定内部 issuer 与 `app:access`。ID Token、refresh token、错误 audience／token_use、缺失 scope 映射不产生业务权限。公开 `sub` 保持 opaque；人员 UUID 与原 account/member 版本来自经验证的私有 `principal`。
+
+MACHINE 使用独立委托，只能在明确批准的 `ORG`／`ORG_SUBTREE`／`TENANT` 数据范围内读取或导出，不拥有人员 `SELF` 语义。创建、处理、删除、人员目录和提醒均拒绝 MACHINE，不生成伪造用户／成员。USER 必须为当前有效 EMPLOYEE。
 
 数据查询与写入始终受租户硬边界、组织上限和动作授权交集限制。`SELF` 按创建人 `ownerUserId` 判断，处理人 `assigneeUserId` 不扩大范围；`ORG`、`ORG_SUBTREE`、`TENANT` 仍受组织上限约束。未知/越界资源按可见性返回 404，不泄露其他租户工单是否存在。
 
@@ -68,7 +72,7 @@ CSV 支持相同筛选，拒绝 `page`/`size`，最多 1000 条，超限返回 4
 
 成员目录和单人校验同时要求调用者当前身份为有效 `EMPLOYEE`，目标也必须具有目标组织内有效的直接员工关系，由平台权威判断。仅有客户关系、员工已停用但客户有效的账号，以及客户成员 ID 都不能作为处理人；同账号同组织的客户关系不影响其有效员工身份被选择。业务 DTO 继续使用 `assigneeUserId`，不接受调用者提供的成员类型或成员身份 ID。
 
-创建非空处理人，或更新时显式提交非空 `assigneeUserId`，均需实时单人校验，即使 ID 与当前值相同。服务先完成业务范围内的非锁定读取并释放连接，再查平台有效员工，最后进入短事务锁定并复核 version、组织与原值。同一 ID 校验成功后保留原显示快照，仅 ID 真正变化时更新显示快照；省略处理人字段保留历史分配和快照，显式 null 清空分配。这两种操作不选择新目标，不请求成员目录。历史目录列表不能替代显式 ID 的单人校验。成员窗口从平台 HTTP 请求开始计 `min(PLATFORM_AUTH_TIMEOUT_MS, 3000ms)`，不因等待数据库锁而续期；提交前过期回滚并返回 `MEMBER_VALIDATION_EXPIRED`，提交后才无法确认有效性时按结果未知处理。平台库与工单库之间没有跨库原子事务。
+创建非空处理人，或更新时显式提交非空 `assigneeUserId`，均需实时单人校验，即使 ID 与当前值相同。服务先完成业务范围内的非锁定读取并释放连接，再查平台有效员工，用同一原 token 再次在线核对主体／代际／授权投影和数据范围，最后进入短事务锁定并复核 version、组织与原值。每次网络检查都不持有业务连接或行锁；信息期限只能缩短，不能替换原操作身份。同一 ID 校验成功后保留原显示快照，仅 ID 真正变化时更新显示快照；省略处理人字段保留历史分配和快照，显式 null 清空分配。这两种操作不选择新目标，不请求成员目录。历史目录列表不能替代显式 ID 的单人校验。成员目录改用独立服务 Basic＋Form POST `/internal/platform/apps/work-orders/members[/userId]`；`resource-directory/1` 外层和原成员 DTO 同时校验。成员窗口取外层原期限与从平台 HTTP 请求开始计 `min(PLATFORM_AUTH_TIMEOUT_MS, 3000ms)` 的较小值，不因等待数据库锁而续期；提交前过期回滚并返回 `MEMBER_VALIDATION_EXPIRED`，提交后才无法确认有效性时按结果未知处理。平台库与工单库之间没有跨库原子事务。
 
 503 `WRITE_RESULT_UNKNOWN` 或网络/协议未知时，先读取当前详情核对版本与状态，再决定后续操作。读取 404 还可能代表可见性改变，不能单凭它证明删除已提交。
 
@@ -76,12 +80,14 @@ CSV 支持相同筛选，拒绝 `page`/`size`，最多 1000 条，超限返回 4
 
 `POST /tickets/{id}/remind` 正文只含 `{ "idempotencyKey": "原始事件键" }`，键规则与创建相同，但独立于创建请求头。后端同时校验工单读取与通知发布授权，目标固定为当前处理人，未分配时为创建人；类型、标题、内容和工单深层链接由服务生成，调用者不能覆盖收件人或正文。
 
-后端先保存不可变提醒意图，确认事务并释放锁，再调用平台发布接口，不修改工单 version。成功返回 `publicationId`、`recipientCount: 1`、`deliveryCount: 1`、`duplicate`、`createdAt`。客户端仍应从平台权威收件箱核对；实时通知服务未运行不代表持久发布失败，已删除的收件箱消息不会因重放重新出现。
+提醒接受内部 USER app_session；canonical external USER 必须同时满足原工单读取授权、`notification:publish` 的审核 scope 映射、准确 scope、发布权限与独立数据范围。缺少 scope 映射或 scope 返回 401，不建立提醒意图；MACHINE 仍返回 403 `OPERATION_DENIED`。后端使用独立服务 Basic 与私有通知表单接口，不把 opaque token 放入旧公开 Bearer 发布链。
 
-503 `REMINDER_PREPARATION_UNKNOWN` 表示准备阶段未确认、本次尚未尝试平台发布，仍须用原事件核对准备结果；`REMINDER_RESULT_UNKNOWN` 表示已尝试发布而结果未知。两者均要求保留原键和固定内容并显式恢复。目标或内容发生变化可能得到 409 `IDEMPOTENCY_CONFLICT`，先读取确认，不换键补发可能已经落库的通知。
+后端先保存不可变提醒意图及原凭据／来源摘要，确认事务并释放锁，再使用同一原请求查询平台结果；只有明确 404 `NOT_FOUND` 才允许发布同一事件，不修改工单 version。未知查询、错误响应或来源变化不会触发补发。成功仍返回 `publicationId`、`recipientCount: 1`、`deliveryCount: 1`、`duplicate`、`createdAt`。客户端仍应从平台权威收件箱核对；实时通知服务未运行不代表持久发布失败，已删除的收件箱消息不会因重放重新出现。
+
+503 `REMINDER_PREPARATION_UNKNOWN` 表示准备阶段未确认、本次尚未尝试平台发布；`REMINDER_RESULT_UNKNOWN` 表示原发布或其结果查询尚未确认。两者均要求保留原键、固定内容与原来源并显式恢复。目标或内容发生变化可能得到 409 `IDEMPOTENCY_CONFLICT`；更换凭据或授权来源使用原键返回 409 `REMINDER_SOURCE_CHANGED`。先读取收件箱核实，不自动换键补发可能已经落库的通知。
 
 ## 错误与运行边界
 
 401 `INVALID_APP_TOKEN` / `INVALID_CONTEXT` 要求停止当前身份请求并等待平台刷新；403 `OPERATION_DENIED` / 数据授权拒绝不能通过隐藏按钮绕过；404 不证明跨租户资源的存在性；409 由用户处理冲突；503 `PLATFORM_UNAVAILABLE` 等故障按失败关闭。所有写入都要结合上文的未知结果分类，不能统一自动重试。
 
-启动迁移、配置和健康检查见[后端说明](README.md)，平台联调与数据库专项测试见[开发指南](docs/development.md)，版本发布和数据库恢复见[部署指南](docs/deployment.md)。迁移历史、创建回执与提醒意图必须保留，不得删历史或修改 checksum 以启动旧构建。
+离线迁移、只读启动校验、配置和健康检查见[后端说明](README.md)，平台联调与数据库专项测试见[开发指南](docs/development.md)，版本发布和数据库恢复见[部署指南](docs/deployment.md)。迁移历史、创建回执与提醒意图必须保留，不得删历史或修改 checksum 以启动旧构建。

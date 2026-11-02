@@ -51,16 +51,20 @@ npm run release:candidate -- --local --version $newVersion --host-origin http://
 | `WORK_ORDERS_POSTGRES_PASSWORD` | 工单独立数据库口令 |
 | `WORK_ORDERS_DATABASE_URL` | `postgresql://work_orders:<URL编码密码>@work-orders-postgres:5432/work_orders` |
 | `WORK_ORDERS_ALLOWED_ORIGINS` | 平台页面的准确 HTTPS origin，多个用逗号分隔 |
-| `PLATFORM_API_ORIGIN` | API 容器可访问的真实平台 HTTPS origin |
-| `PLATFORM_CLIENT_ID` / `PLATFORM_CLIENT_SECRET` | 已绑定 work-orders 的机密客户端凭据 |
+| `PLATFORM_API_ORIGIN` | API 可访问的私有平台 HTTPS origin（资源 authorize 和私有目录必须同源可达） |
+| `PLATFORM_CLIENT_ID` / `PLATFORM_CLIENT_SECRET` | 已绑定 work-orders 的独立 APP_RESOURCE 服务凭据，不能使用 OAuth RP secret |
+| `PLATFORM_IDENTITY_ISSUER` | 外部凭据的准确 canonical HTTPS issuer，与私有平台 origin 独立 |
+| `PLATFORM_RESOURCE_SCOPE_BINDINGS` | 与平台审核记录一致的 JSON 操作→单个 OAuth scope 映射；缺失操作拒绝外部凭据 |
 | `EDGE_NETWORK_NAME` | 预先创建、可与平台网关通信的受控网络 |
 | `WORK_ORDERS_METRICS_TOKEN` | 可选的独立私有指标 token |
 
-Compose 显式要求 `WORK_ORDERS_ALLOWED_ORIGINS`，缺失/空值在配置展开阶段报错。Rust 与 Node 配置都拒绝缺失、空值、`null`、通配符、带路径或尾斜杠的来源；生产只接受 HTTPS，开发可使用准确回环 HTTP。该值来自平台页面地址，不能从私有 `PLATFORM_API_ORIGIN` 猜测。平台同域 API 代理若继续转发浏览器 `Origin`，API 仍执行相同检查。允许来源只负责 CORS，受保护请求仍要求应用 token 与实时授权。
+Compose 显式要求 `WORK_ORDERS_ALLOWED_ORIGINS`，缺失/空值在配置展开阶段报错。Rust 启动与前端构建配置均拒绝缺失、空值、`null`、通配符、带路径或尾斜杠的来源；生产只接受 HTTPS，开发可使用准确回环 HTTP。该值来自平台页面地址，不能从私有 `PLATFORM_API_ORIGIN` 猜测。平台同域 API 代理若继续转发浏览器 `Origin`，API 仍执行相同检查。允许来源只负责 CORS，受保护请求仍要求应用 token 与实时授权。
 
 授权预算、自定义 CA、数据库预算等配置若未在基础 Compose 中透传，须一并添加到 override；证书文件还需只读挂载。`PLATFORM_CA_CERT_FILE` 使用容器路径，不能仅设置宿主变量。`PLATFORM_API_ORIGIN` 不能用容器 `localhost` 指代宿主平台。数据库 TLS 根据实际网络要求显式配置，Rust 生产开关不会强制数据库 TLS。
 
 ## 启动与健康检查
+
+首次启动 API 前，环境 owner 须使用同版本独立 `work-orders-migrate` 和 owner 连接在专属空库建立当前 `0001` 基线，再向独立受限 LOGIN 运行账号交接 CONNECT、schema USAGE、业务 DML 和核验 SELECT/EXECUTE；不给予 DDL、owner membership 或迁移历史写权限。迁移作业单独执行，不依赖 API/Compose 自动建表；本机 NOLOGIN owner 委托方式见[独立迁移命令](../README.md)。正常 API 只读核验基线，空库、缺少历史、checksum 或结构指纹不匹配均拒绝启动。
 
 下面命令在服务器的 `backend/` 执行，使用同一私有 env 文件；额外配置若使用 override，应每次传入相同的 `-f` 参数：
 

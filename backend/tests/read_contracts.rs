@@ -1,7 +1,7 @@
 //! Explicit, owned PostgreSQL + controlled platform HTTP fixture regressions.
 //! These tests never use a developer's configured business or platform database.
 use std::{
-    collections::{BTreeSet, HashMap},
+    collections::{BTreeMap, BTreeSet, HashMap},
     future::{Future, IntoFuture},
     sync::{Arc, Mutex},
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
@@ -12,7 +12,7 @@ use axum::{
     extract::{Request, State},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
-    routing::{any, get, post},
+    routing::{any, post},
     Router,
 };
 use serde_json::{json, Value};
@@ -22,6 +22,7 @@ use uuid::Uuid;
 use work_orders_api::{application, initialize_database, Config};
 
 const PREFIX: &str = "/work-orders-api";
+const RESOURCE_SCOPES: &str = r#"{"ticket:read":"work-orders:read","ticket:export":"work-orders:export","ticket:create":"work-orders:create","ticket:update":"work-orders:update","ticket:delete":"work-orders:delete"}"#;
 const SECRET: &str = "phase17-fixture-secret";
 const BASIC: &str = "Basic aW50ZWdyYXRpb246cGhhc2UxNy1maXh0dXJlLXNlY3JldA==";
 
@@ -177,12 +178,28 @@ enum Mode {
 
 #[derive(Clone)]
 struct Scenario {
+    principal: Value,
+    authorization_override: Option<Value>,
     intro: Value,
     context: Value,
     intro_status: StatusCode,
     context_status: StatusCode,
     intro_mode: Mode,
     context_mode: Mode,
+}
+
+impl Scenario {
+    fn authorization(&self, action: &str) -> Value {
+        if let Some(value) = &self.authorization_override {
+            return value.clone();
+        }
+        json!({"contractVersion":"resource-authorization/1","issuer":"https://auth.saas.test",
+            "tokenUse":"access_token","subjectMode":"USER","clientId":"88888888-8888-7888-8888-888888888888",
+            "sourceApplicationId":"aaaaaaaa-aaaa-7aaa-8aaa-aaaaaaaaaaaa","resource":"work-orders",
+            "action":action,"targetApplicationId":self.context["application"]["id"],"audience":"work-orders",
+            "expiresAt":self.context["expiresAt"],"principal":self.principal,
+            "introspection":self.intro,"context":self.context})
+    }
 }
 
 #[derive(Clone)]
@@ -232,56 +249,49 @@ fn response(status: StatusCode, mode: &Mode, value: Value) -> Response {
     }
 }
 
-async fn introspect(State(shared): State<SharedPlatform>, request: Request) -> Response {
+async fn authorize(State(shared): State<SharedPlatform>, request: Request) -> Response {
+    assert_eq!(request.method(), axum::http::Method::POST);
+    assert!(request.uri().query().is_none());
+    assert!(!request.headers().contains_key("cookie"));
     let headers = request.headers().clone();
-    let body = to_bytes(request.into_body(), 16_384)
+    let body = to_bytes(request.into_body(), 16384)
         .await
-        .expect("bounded introspection request");
-    let fields: Vec<_> = url::form_urlencoded::parse(&body).into_owned().collect();
-    assert_eq!(fields.len(), 1, "introspection sends only the token");
-    assert_eq!(fields[0].0, "token");
-    let token = &fields[0].1;
+        .expect("bounded canonical authorization");
+    let pairs: Vec<_> = url::form_urlencoded::parse(&body).into_owned().collect();
+    let fields: BTreeMap<_, _> = pairs.iter().cloned().collect();
+    assert_eq!(pairs.len(), 3);
+    assert_eq!(fields.len(), 3);
+    assert_eq!(fields.get("resource").map(String::as_str), Some("ticket"));
+    let action = fields.get("action").unwrap();
+    assert!(["read", "export"].contains(&action.as_str()));
+    let token = fields.get("token").unwrap();
     let scenario = {
         let mut state = shared.lock().expect("fixture state");
-        state.calls.push(call("intro", token, &headers));
+        state.calls.push(call("authorize", token, &headers));
         state.scenarios.get(token).cloned()
     };
     let Some(scenario) = scenario else {
         return StatusCode::UNAUTHORIZED.into_response();
     };
-    if matches!(scenario.intro_mode, Mode::Delay) {
+    if matches!(scenario.intro_mode, Mode::Delay) || matches!(scenario.context_mode, Mode::Delay) {
         tokio::time::sleep(Duration::from_millis(600)).await;
     }
-    response(scenario.intro_status, &scenario.intro_mode, scenario.intro)
-}
-
-async fn context(State(shared): State<SharedPlatform>, request: Request) -> Response {
-    assert!(
-        request.uri().query().is_none(),
-        "context contract has no query arguments"
-    );
-    let headers = request.headers();
-    let token = headers
-        .get("authorization")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.strip_prefix("Bearer "))
-        .unwrap_or_default();
-    let scenario = {
-        let mut state = shared.lock().expect("fixture state");
-        state.calls.push(call("context", token, headers));
-        state.scenarios.get(token).cloned()
+    let status = if !scenario.intro_status.is_success() {
+        scenario.intro_status
+    } else {
+        scenario.context_status
     };
-    let Some(scenario) = scenario else {
-        return StatusCode::UNAUTHORIZED.into_response();
+    let mode = if matches!(scenario.intro_mode, Mode::Json) {
+        &scenario.context_mode
+    } else {
+        &scenario.intro_mode
     };
-    if matches!(scenario.context_mode, Mode::Delay) {
-        tokio::time::sleep(Duration::from_millis(600)).await;
-    }
-    response(
-        scenario.context_status,
-        &scenario.context_mode,
-        scenario.context,
-    )
+    let body = if status == StatusCode::FORBIDDEN {
+        json!({"code":"FORBIDDEN"})
+    } else {
+        scenario.authorization(action)
+    };
+    response(status, mode, body)
 }
 
 async fn redirect_target(State(shared): State<SharedPlatform>) -> Response {
@@ -354,10 +364,12 @@ impl Reply {
 
 impl Harness {
     async fn new(f: &Fixture) -> Self {
+        Self::configured(f, &[]).await
+    }
+    async fn configured(f: &Fixture, overrides: &[(&str, &str)]) -> Self {
         let state = SharedPlatform::default();
         let platform = Router::new()
-            .route("/oauth/introspect", post(introspect))
-            .route("/api/apps/work-orders/context", get(context))
+            .route("/api/apps/work-orders/authorize", post(authorize))
             .route("/redirect-target", any(redirect_target))
             .with_state(state.clone());
         let listener = TcpListener::bind("127.0.0.1:0")
@@ -365,21 +377,27 @@ impl Harness {
             .expect("platform fixture listener");
         let platform_origin = format!("http://{}", listener.local_addr().unwrap());
         let platform_task = tokio::spawn(axum::serve(listener, platform).into_future());
-        let config = Config::from_pairs([
+        let mut pairs: BTreeMap<String, String> = [
             ("WORK_ORDERS_DATABASE_URL", f.database_url.as_str()),
             ("PLATFORM_API_ORIGIN", platform_origin.as_str()),
             ("PLATFORM_CLIENT_ID", "integration"),
             ("PLATFORM_CLIENT_SECRET", SECRET),
-            // This controlled fixture implements the original two-HTTP protocol.
-            // Combined authorization is covered by the real-platform suites.
-            ("PLATFORM_AUTHORIZATION_MODE", "legacy"),
+            ("PLATFORM_AUTHORIZATION_MODE", "canonical"),
+            ("PLATFORM_IDENTITY_ISSUER", "https://auth.saas.test"),
+            ("PLATFORM_RESOURCE_SCOPE_BINDINGS", RESOURCE_SCOPES),
             ("PLATFORM_AUTH_TIMEOUT_MS", "150"),
             (
                 "WORK_ORDERS_ALLOWED_ORIGINS",
                 "https://platform.example.test",
             ),
-        ])
-        .expect("isolated application config");
+        ]
+        .into_iter()
+        .map(|(key, value)| (key.to_owned(), value.to_owned()))
+        .collect();
+        for (key, value) in overrides {
+            pairs.insert((*key).to_owned(), (*value).to_owned());
+        }
+        let config = Config::from_pairs(pairs).expect("isolated application config");
         assert!(!format!("{config:?}").contains(SECRET));
         let app = application(&config, f.pool.clone()).expect("protected application");
         let listener = TcpListener::bind("127.0.0.1:0")
@@ -414,8 +432,14 @@ impl Harness {
             "subjectUserId":f.user.to_string(),"scope":scope,"organizationIds":organizations.iter().map(Uuid::to_string).collect::<Vec<_>>()})
         };
         let scenario = Scenario {
-            intro: json!({"active":true,"aud":"work-orders","sub":f.user.to_string(),"tenant_id":f.tenant.to_string(),
-                "organization_id":f.org.to_string(),"exp":SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs()+600,"token_type":"Bearer"}),
+            principal: json!({"userId":f.user.to_string(),"membershipId":"77777777-7777-7777-8777-777777777777",
+                "memberType":"EMPLOYEE","identityVersion":"1","accountVersion":"1",
+                "tenantId":f.tenant.to_string(),"organizationId":f.org.to_string()}),
+            authorization_override: None,
+            intro: json!({"active":true,"aud":"work-orders","sub":"opaque-pairwise-subject-without-uuid",
+                "exp":SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs()+120,"token_type":"Bearer",
+                "token_use":"access_token","iss":"https://auth.saas.test","scope":"work-orders:read work-orders:export",
+                "client_id":"88888888-8888-7888-8888-888888888888"}),
             context: json!({"contractVersion":"1.0","appCode":"work-orders","contextVersion":"a".repeat(64),"expiresAt":expires,
                 "user":{"id":f.user.to_string(),"username":"fixture","displayName":"测试用户"},
                 "tenant":{"id":f.tenant.to_string()},"organization":{"id":f.org.to_string(),"name":"测试组织"},
@@ -460,20 +484,12 @@ impl Harness {
         for call in &state.calls {
             assert!(
                 Uuid::parse_str(&call.request_id).is_ok(),
-                "fresh trace propagated to each platform call"
+                "fresh request trace reaches the authority"
             );
-            if call.stage == "intro" {
-                assert_eq!(call.authorization, BASIC);
-                assert_eq!(call.content_type, "application/x-www-form-urlencoded");
-            } else {
-                assert_eq!(call.authorization, format!("Bearer {}", call.token));
-                assert!(
-                    state.calls.iter().any(|intro| intro.stage == "intro"
-                        && intro.token == call.token
-                        && intro.request_id == call.request_id),
-                    "introspection and context share the request trace"
-                );
-            }
+            assert_eq!(call.stage, "authorize", "no legacy fallback endpoint");
+            assert!(!call.token.is_empty());
+            assert_eq!(call.authorization, BASIC);
+            assert_eq!(call.content_type, "application/x-www-form-urlencoded");
         }
     }
 }
@@ -743,11 +759,21 @@ async fn invalid_token_and_context_contracts() {
             ("exp", json!(1)),
             ("exp", json!("9999999999")),
             ("token_type", json!("bearer")),
-            ("sub", json!("not-a-uuid")),
+            ("sub", json!("")),
         ] {
             let mut s = base.clone();
+            let malformed =
+                (field == "aud" && value.is_array()) || (field == "exp" && value.is_string());
             s.intro[field] = value;
-            cases.push((s, "INVALID_APP_TOKEN"));
+            cases.push((
+                s,
+                if malformed { 503 } else { 401 },
+                if malformed {
+                    "PLATFORM_UNAVAILABLE"
+                } else {
+                    "INVALID_APP_TOKEN"
+                },
+            ));
         }
         for (field, value) in [
             ("contractVersion", json!("2.0")),
@@ -759,17 +785,27 @@ async fn invalid_token_and_context_contracts() {
         ] {
             let mut s = base.clone();
             s.context[field] = value;
-            cases.push((s, "INVALID_CONTEXT"));
+            cases.push((
+                s,
+                401,
+                if field == "expiresAt" {
+                    "INVALID_APP_TOKEN"
+                } else {
+                    "INVALID_CONTEXT"
+                },
+            ));
         }
         for path in ["user", "tenant", "organization"] {
             let mut s = base.clone();
             s.context[path]["id"] = json!(Uuid::now_v7().to_string());
-            cases.push((s, "INVALID_CONTEXT"));
+            cases.push((s, 401, "INVALID_CONTEXT"));
         }
-        for (i, (scenario, code)) in cases.into_iter().enumerate() {
+        for (i, (scenario, status, code)) in cases.into_iter().enumerate() {
             let token = format!("invalid-{i}");
             h.put(&token, scenario);
-            h.request(Some(&token), "/tickets").await.error(401, code);
+            h.request(Some(&token), "/tickets")
+                .await
+                .error(status, code);
         }
         h.assert_wire();
     })
@@ -864,10 +900,13 @@ async fn authorization_is_fresh_on_every_request() {
             .await
             .error(403, "OPERATION_DENIED");
         let state = h.state.lock().unwrap();
-        assert_eq!(state.calls.iter().filter(|c| c.stage == "intro").count(), 3);
         assert_eq!(
-            state.calls.iter().filter(|c| c.stage == "context").count(),
-            2
+            state
+                .calls
+                .iter()
+                .filter(|c| c.stage == "authorize")
+                .count(),
+            3
         );
         drop(state);
         h.assert_wire();
@@ -1274,4 +1313,172 @@ async fn explain_plan(
         "WORK_ORDERS_QUERY_PLAN {}",
         json!({"case":name,"rows":total,"tenantRows":19207,"ceilingRows":1602,"sql":sql,"plan":plans,"newIndexes":[],"parameters":{"tenantId":f.tenant.to_string(),"organizationIds":if ceiling {jids(&[f.org])} else {Value::Null},"ownerUserId":if self_only {json!(f.user.to_string())} else {Value::Null},"pattern":if kind=="search" {json!("%100\\%\\_\\\\%")} else {Value::Null},"maximumOffset":if kind=="deep" {99_999_900} else {0}}})
     );
+}
+
+fn machine_authorization(
+    tenant: Uuid,
+    organizations: &[Uuid],
+    scope: &str,
+    action: &str,
+    application: &str,
+    expires: &str,
+) -> Value {
+    json!({"contractVersion":"resource-authorization/1","issuer":"https://auth.saas.test",
+        "tokenUse":"access_token","subjectMode":"MACHINE","clientId":"88888888-8888-7888-8888-888888888888",
+        "sourceApplicationId":"aaaaaaaa-aaaa-7aaa-8aaa-aaaaaaaaaaaa","targetApplicationId":application,
+        "resource":"work-orders","action":action,"audience":"work-orders","scope":[format!("work-orders:{action}")],
+        "credentialVersion":"1","expiresAt":expires,"delegation":{"delegationId":"bbbbbbbb-bbbb-7bbb-8bbb-bbbbbbbbbbbb",
+            "version":"1","targetApplicationId":application,"tenantId":tenant.to_string(),
+            "organizationId":organizations.first().map(Uuid::to_string),"resource":"ticket","action":action,"scope":scope,
+            "organizationIds":organizations.iter().map(Uuid::to_string).collect::<Vec<_>>(),"expiresAt":expires}})
+}
+
+#[tokio::test]
+#[ignore = "requires owned CI PostgreSQL"]
+async fn canonical_machine_read_export_respect_only_explicit_delegation() {
+    owned(|f| async move {
+        let h = Harness::new(&f).await;
+        let base = h
+            .scenario(&f, "machine-base", "TENANT", vec![], Value::Null)
+            .await;
+        let application = base.context["application"]["id"].as_str().unwrap();
+        let expiry = base.context["expiresAt"].as_str().unwrap();
+        for (scope, organizations, wanted) in [
+            ("ORG", vec![f.org], vec![0, 1]),
+            ("ORG_SUBTREE", vec![f.org, f.child], vec![0, 1, 2, 3]),
+            ("TENANT", vec![], vec![0, 1, 2, 3, 4, 5]),
+        ] {
+            for action in ["read", "export"] {
+                let mut scenario = base.clone();
+                let proof = machine_authorization(
+                    f.tenant,
+                    &organizations,
+                    scope,
+                    action,
+                    application,
+                    expiry,
+                );
+                assert!(
+                    proof.get("principal").is_none()
+                        && proof.get("context").is_none()
+                        && proof.get("sub").is_none()
+                );
+                scenario.authorization_override = Some(proof);
+                h.put("machine", scenario);
+                let reply = h
+                    .request(
+                        Some("machine"),
+                        if action == "read" {
+                            "/tickets?size=100"
+                        } else {
+                            "/tickets/export.csv"
+                        },
+                    )
+                    .await;
+                assert_eq!(reply.status, 200, "{}", reply.text());
+                if action == "read" {
+                    assert_eq!(ids(&reply.json()), expected(&f, &wanted));
+                } else {
+                    assert_eq!(csv(&reply).len() - 1, wanted.len());
+                }
+            }
+        }
+        for (label, mut proof, status, code) in [
+            (
+                "self",
+                machine_authorization(f.tenant, &[f.org], "SELF", "read", application, expiry),
+                403,
+                "DATA_DENIED",
+            ),
+            (
+                "wrong-action",
+                machine_authorization(f.tenant, &[], "TENANT", "export", application, expiry),
+                401,
+                "INVALID_APP_TOKEN",
+            ),
+            (
+                "no-delegation",
+                machine_authorization(f.tenant, &[], "TENANT", "read", application, expiry),
+                503,
+                "PLATFORM_UNAVAILABLE",
+            ),
+            (
+                "person-field",
+                machine_authorization(f.tenant, &[], "TENANT", "read", application, expiry),
+                503,
+                "PLATFORM_UNAVAILABLE",
+            ),
+            (
+                "wrong-audience",
+                machine_authorization(f.tenant, &[], "TENANT", "read", application, expiry),
+                401,
+                "INVALID_APP_TOKEN",
+            ),
+        ] {
+            if label == "no-delegation" {
+                proof.as_object_mut().unwrap().remove("delegation");
+            }
+            if label == "person-field" {
+                proof["principal"] = Value::Null;
+            }
+            if label == "wrong-audience" {
+                proof["audience"] = json!("stores");
+            }
+            let mut scenario = base.clone();
+            scenario.authorization_override = Some(proof);
+            h.put(label, scenario);
+            h.request(Some(label), "/tickets").await.error(status, code);
+        }
+        h.assert_wire();
+    })
+    .await;
+}
+
+#[tokio::test]
+#[ignore = "requires owned CI PostgreSQL"]
+async fn canonical_user_requires_explicit_scope_binding_and_private_principal() {
+    owned(|f| async move {
+        let missing = Harness::configured(&f, &[("PLATFORM_RESOURCE_SCOPE_BINDINGS", "{}")]).await;
+        missing
+            .scenario(&f, "opaque", "TENANT", vec![], Value::Null)
+            .await;
+        missing
+            .request(Some("opaque"), "/tickets")
+            .await
+            .error(401, "INVALID_APP_TOKEN");
+        let h = Harness::new(&f).await;
+        let base = h
+            .scenario(&f, "opaque", "TENANT", vec![], Value::Null)
+            .await;
+        assert_eq!(
+            h.request(Some("opaque"), "/tickets").await.status,
+            200,
+            "opaque public subject is not a database key"
+        );
+        let mut wrong = base.clone();
+        wrong.intro["scope"] = json!("openid profile");
+        h.put("wrong-scope", wrong);
+        h.request(Some("wrong-scope"), "/tickets")
+            .await
+            .error(401, "INVALID_APP_TOKEN");
+        for (index, key) in ["userId", "membershipId", "tenantId", "organizationId"]
+            .into_iter()
+            .enumerate()
+        {
+            let mut wrong = base.clone();
+            wrong.principal[key] = json!("00000000-0000-0000-0000-000000000000");
+            let token = format!("wrong-principal-{index}");
+            h.put(&token, wrong);
+            h.request(Some(&token), "/tickets")
+                .await
+                .error(401, "INVALID_APP_TOKEN");
+        }
+        let mut wrong = base.clone();
+        wrong.principal["memberType"] = json!("CUSTOMER");
+        h.put("customer", wrong);
+        h.request(Some("customer"), "/tickets")
+            .await
+            .error(401, "INVALID_APP_TOKEN");
+    })
+    .await;
 }

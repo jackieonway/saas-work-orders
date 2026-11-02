@@ -5,6 +5,9 @@ use uuid::Uuid;
 
 use crate::error::ApiError;
 
+mod resource;
+pub(super) use resource::{validate_authorization, validate_reminder_authorization};
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Action {
     Read,
@@ -36,17 +39,34 @@ pub(crate) enum Scope {
 
 /// This value is constructed only after fresh introspection and context checks.
 /// It deliberately contains no token or confidential client credential.
+#[derive(Clone, PartialEq, Eq)]
+enum Actor {
+    User {
+        user_id: Uuid,
+        organization_id: Uuid,
+        organization_name: String,
+        owner_display_name: String,
+    },
+    Machine {
+        client_id: Uuid,
+        source_application_id: Uuid,
+        credential_version: i64,
+        delegation_id: Uuid,
+        delegation_version: i64,
+        organization_id: Option<Uuid>,
+    },
+}
+
+#[derive(Clone)]
 pub(crate) struct Authorized {
     tenant_id: Uuid,
-    user_id: Uuid,
-    organization_id: Uuid,
+    actor: Actor,
     organization_ceiling: Option<Vec<Uuid>>,
     scope: Scope,
     grant_organization_ids: Vec<Uuid>,
     action: Action,
     expires_at: i64,
-    organization_name: String,
-    owner_display_name: String,
+    source_binding: String,
 }
 
 pub(crate) struct ReminderAuthorized {
@@ -57,6 +77,9 @@ pub(crate) struct ReminderAuthorized {
 }
 
 impl ReminderAuthorized {
+    pub(crate) fn source_binding(&self) -> &str {
+        &self.read.source_binding
+    }
     pub(crate) fn read(&self) -> &Authorized {
         &self.read
     }
@@ -78,9 +101,9 @@ impl ReminderAuthorized {
         }
         let allowed = match self.notification_scope {
             Scope::SelfOnly => {
-                organization == self.read.organization_id && user == self.read.user_id
+                organization == self.read.organization_id()? && user == self.read.user_id()?
             }
-            Scope::Org => organization == self.read.organization_id,
+            Scope::Org => organization == self.read.organization_id()?,
             Scope::OrgSubtree => self.notification_organizations.contains(&organization),
             Scope::Tenant => true,
         };
@@ -93,25 +116,79 @@ impl ReminderAuthorized {
 }
 
 impl Authorized {
+    pub(super) fn same_authority(&self, other: &Self) -> bool {
+        self.source_binding == other.source_binding
+            && self.actor == other.actor
+            && self.tenant_id == other.tenant_id
+            && self.organization_ceiling == other.organization_ceiling
+            && self.scope == other.scope
+            && self.grant_organization_ids == other.grant_organization_ids
+            && self.action == other.action
+    }
+    pub(super) fn retain_deadline(&mut self, original: &Self) {
+        self.expires_at = self.expires_at.min(original.expires_at);
+    }
     pub(crate) fn tenant_id(&self) -> Uuid {
         self.tenant_id
     }
-    pub(crate) fn user_id(&self) -> Uuid {
-        self.user_id
+    pub(crate) fn require_person(&self) -> Result<(), ApiError> {
+        if matches!(self.actor, Actor::User { .. }) {
+            Ok(())
+        } else {
+            Err(ApiError::data_denied())
+        }
     }
-    pub(crate) fn organization_id(&self) -> Uuid {
-        self.organization_id
+    pub(crate) fn user_id(&self) -> Result<Uuid, ApiError> {
+        match self.actor {
+            Actor::User { user_id, .. } => Ok(user_id),
+            Actor::Machine { .. } => Err(ApiError::data_denied()),
+        }
     }
-    pub(crate) fn organization_name(&self) -> &str {
-        &self.organization_name
+    pub(crate) fn organization_id(&self) -> Result<Uuid, ApiError> {
+        match self.actor {
+            Actor::User {
+                organization_id, ..
+            } => Ok(organization_id),
+            Actor::Machine { .. } => Err(ApiError::data_denied()),
+        }
     }
-    pub(crate) fn owner_display_name(&self) -> &str {
-        &self.owner_display_name
+    pub(crate) fn organization_name(&self) -> Result<&str, ApiError> {
+        match &self.actor {
+            Actor::User {
+                organization_name, ..
+            } => Ok(organization_name),
+            Actor::Machine { .. } => Err(ApiError::data_denied()),
+        }
+    }
+    pub(crate) fn owner_display_name(&self) -> Result<&str, ApiError> {
+        match &self.actor {
+            Actor::User {
+                owner_display_name, ..
+            } => Ok(owner_display_name),
+            Actor::Machine { .. } => Err(ApiError::data_denied()),
+        }
+    }
+    pub(super) fn filter_user(&self) -> Option<Uuid> {
+        match self.actor {
+            Actor::User { user_id, .. } => Some(user_id),
+            Actor::Machine { .. } => None,
+        }
+    }
+    pub(super) fn filter_organization(&self) -> Option<Uuid> {
+        match self.actor {
+            Actor::User {
+                organization_id, ..
+            } => Some(organization_id),
+            Actor::Machine {
+                organization_id, ..
+            } => organization_id,
+        }
     }
     /// Creation and assignment changes must stay in the directory-like target
     /// boundary. An existing SELF ticket may still be updated in a visible child
     /// organization without changing its assignment.
     pub(crate) fn require_organization(&self, target: Uuid) -> Result<(), ApiError> {
+        self.require_person()?;
         self.assert_fresh()?;
         if self
             .organization_ceiling
@@ -121,7 +198,7 @@ impl Authorized {
             return Err(ApiError::data_denied());
         }
         let allowed = match self.scope {
-            Scope::SelfOnly | Scope::Org => target == self.organization_id,
+            Scope::SelfOnly | Scope::Org => target == self.organization_id()?,
             Scope::OrgSubtree => self.grant_organization_ids.contains(&target),
             Scope::Tenant => true,
         };
@@ -136,6 +213,9 @@ impl Authorized {
     }
     pub(crate) fn scope(&self) -> Scope {
         self.scope
+    }
+    pub(super) fn action(&self) -> Action {
+        self.action
     }
     pub(crate) fn grant_organization_ids(&self) -> &[Uuid] {
         &self.grant_organization_ids
@@ -169,30 +249,6 @@ pub(super) fn now_millis() -> i64 {
 
 fn id(value: &Value) -> Option<Uuid> {
     crate::uuid_v7::parse(value.as_str()?)
-}
-
-pub(super) fn validate_intro(intro: &Value, now: i64) -> Result<TokenIdentity, ApiError> {
-    let parse = || -> Option<TokenIdentity> {
-        let exp = intro.get("exp")?.as_f64()?;
-        if !exp.is_finite() || exp.fract() != 0.0 || exp.abs() > 9_007_199_254_740_991.0 {
-            return None;
-        }
-        let expires_at = (exp as i128) * 1000;
-        if intro.get("active")?.as_bool() != Some(true)
-            || intro.get("aud")?.as_str() != Some("work-orders")
-            || intro.get("token_type")?.as_str() != Some("Bearer")
-            || expires_at <= i128::from(now)
-        {
-            return None;
-        }
-        Some(TokenIdentity {
-            user: id(intro.get("sub")?)?,
-            tenant: id(intro.get("tenant_id")?)?,
-            organization: id(intro.get("organization_id")?)?,
-            expires_at,
-        })
-    };
-    parse().ok_or_else(ApiError::invalid_token)
 }
 
 pub(super) fn validate_context(
@@ -277,15 +333,18 @@ pub(super) fn validate_context(
     }
     Ok(Authorized {
         tenant_id: identity.tenant,
-        user_id: identity.user,
-        organization_id: identity.organization,
+        actor: Actor::User {
+            user_id: identity.user,
+            organization_id: identity.organization,
+            organization_name: organization_name.to_owned(),
+            owner_display_name: owner_display_name.to_owned(),
+        },
         organization_ceiling,
         scope,
         grant_organization_ids: organization_ids,
         action,
         expires_at: effective_expiry,
-        organization_name: organization_name.to_owned(),
-        owner_display_name: owner_display_name.to_owned(),
+        source_binding: hash.to_owned(),
     })
 }
 

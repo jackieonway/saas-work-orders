@@ -15,11 +15,17 @@ fn database(_error: sqlx::Error) -> ApiError {
 pub(super) async fn claim(
     pool: &PgPool,
     auth: &ReminderAuthorized,
+    token: &str,
     id: Uuid,
     key: &str,
 ) -> Result<String, ApiError> {
     auth.assert_fresh()?;
     let read = auth.read();
+    let token_digest = format!("{:x}", Sha256::digest(token.as_bytes()));
+    let source_binding = auth.source_binding();
+    if source_binding.len() != 64 {
+        return Err(ApiError::invalid_context());
+    }
     let mut transaction = crate::telemetry::begin(pool).await.map_err(database)?;
     auth.assert_fresh()?;
     let mut select = QueryBuilder::<Postgres>::new("SELECT id,number,organization_id,owner_user_id,assignee_user_id FROM public.work_orders WHERE ");
@@ -45,20 +51,31 @@ pub(super) async fn claim(
     let candidate = dto::payload(&ticket, key);
     let json = serde_json::to_string(&candidate).map_err(|_| ApiError::database_unavailable())?;
     let hash = format!("{:x}", Sha256::digest(json.as_bytes()));
-    sqlx::query("INSERT INTO public.work_order_reminder_intents(tenant_id,organization_id,application_id,user_id,idempotency_key,ticket_id,target_organization_id,recipient_user_id,request_hash,request_json) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT(tenant_id,organization_id,application_id,user_id,idempotency_key) DO NOTHING")
-        .bind(read.tenant_id()).bind(read.organization_id()).bind(auth.application_id()).bind(read.user_id()).bind(key)
-        .bind(ticket.id).bind(ticket.organization).bind(ticket.recipient()).bind(&hash).bind(&json)
+    sqlx::query("INSERT INTO public.work_order_reminder_intents(tenant_id,organization_id,application_id,user_id,idempotency_key,ticket_id,target_organization_id,recipient_user_id,request_hash,request_json,token_digest,source_binding) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) ON CONFLICT(tenant_id,organization_id,application_id,user_id,idempotency_key) DO NOTHING")
+        .bind(read.tenant_id()).bind(read.organization_id()?).bind(auth.application_id()).bind(read.user_id()?).bind(key)
+        .bind(ticket.id).bind(ticket.organization).bind(ticket.recipient()).bind(&hash).bind(&json).bind(&token_digest).bind(source_binding)
         .execute(&mut *transaction).await.map_err(database)?;
     auth.assert_fresh()?;
-    let intent = sqlx::query("SELECT tenant_id,organization_id,application_id,user_id,idempotency_key,ticket_id,target_organization_id,recipient_user_id,request_hash,CASE WHEN octet_length(request_json)<=$6 THEN request_json END AS request_json FROM public.work_order_reminder_intents WHERE tenant_id=$1 AND organization_id=$2 AND application_id=$3 AND user_id=$4 AND idempotency_key=$5 FOR SHARE")
-        .bind(read.tenant_id()).bind(read.organization_id()).bind(auth.application_id()).bind(read.user_id()).bind(key).bind(MAX_JSON)
+    let intent = sqlx::query("SELECT tenant_id,organization_id,application_id,user_id,idempotency_key,ticket_id,target_organization_id,recipient_user_id,request_hash,token_digest,source_binding,CASE WHEN octet_length(request_json)<=$6 THEN request_json END AS request_json FROM public.work_order_reminder_intents WHERE tenant_id=$1 AND organization_id=$2 AND application_id=$3 AND user_id=$4 AND idempotency_key=$5 FOR SHARE")
+        .bind(read.tenant_id()).bind(read.organization_id()?).bind(auth.application_id()).bind(read.user_id()?).bind(key).bind(MAX_JSON)
         .fetch_one(&mut *transaction).await.map_err(database)?;
     auth.assert_fresh()?;
+    if intent
+        .try_get::<String, _>("token_digest")
+        .map_err(database)?
+        != token_digest
+        || intent
+            .try_get::<String, _>("source_binding")
+            .map_err(database)?
+            != source_binding
+    {
+        return Err(super::source_changed());
+    }
     for (field, expected) in [
         ("tenant_id", read.tenant_id()),
-        ("organization_id", read.organization_id()),
+        ("organization_id", read.organization_id()?),
         ("application_id", auth.application_id()),
-        ("user_id", read.user_id()),
+        ("user_id", read.user_id()?),
     ] {
         if intent.try_get::<Uuid, _>(field).map_err(database)? != expected {
             return Err(ApiError::database_unavailable());

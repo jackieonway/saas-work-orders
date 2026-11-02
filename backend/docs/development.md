@@ -4,7 +4,7 @@
 
 ## 准备工具与平台登记
 
-安装 Node.js 24.22.1、npm 11.16.0、Rust 1.97.0，并准备可创建工单业务表的专属 PostgreSQL 账号。确认 `node --version` 与 `npm --version` 使用同一套 Node 环境；Windows 的 PATH 可能优先选中其他软件附带的旧 Node。
+安装 Node.js 24.22.1、npm 11.16.0、Rust 1.97.0，并准备独立空库、NOLOGIN owner 和受限 LOGIN 运行账号。先以 owner 权限与单独的 `WORK_ORDERS_DATABASE_URL` 执行 `cargo run --locked --bin work-orders-migrate` 建立当前 `0001` 基线，再授予运行账号 CONNECT、schema USAGE、业务 DML 与核验所需 SELECT/EXECUTE；不给予数据库 CREATE/TEMP、schema CREATE、owner membership 或迁移历史写权限。确认 `node --version` 与 `npm --version` 使用同一套 Node 环境；Windows 的 PATH 可能优先选中其他软件附带的旧 Node。
 
 平台需先运行，并完成以下登记。`manifests` 是人工配置参考，不是自动执行或自动授权脚本。
 
@@ -25,16 +25,19 @@ $env:WORK_ORDERS_DATABASE_URL='postgresql://<账号>:<URL编码密码>@127.0.0.1
 $env:WORK_ORDERS_HOST='127.0.0.1'
 $env:WORK_ORDERS_PORT='3004'
 $env:WORK_ORDERS_ALLOWED_ORIGINS='http://127.0.0.1:3000'
-$env:PLATFORM_API_ORIGIN='http://127.0.0.1:3000'
-$env:PLATFORM_CLIENT_ID='<平台生成的客户端ID>'
+$env:PLATFORM_API_ORIGIN='https://console.saas.test:24444'
+$env:PLATFORM_CLIENT_ID='<独立APP_RESOURCE服务ID>'
 $env:PLATFORM_CLIENT_SECRET='<后端私有密钥>'
-$env:PLATFORM_AUTHORIZATION_MODE='combined'
+$env:PLATFORM_AUTHORIZATION_MODE='canonical'
+$env:PLATFORM_IDENTITY_ISSUER='https://auth.saas.test'
+# 与平台已审核 platform_resource_bindings 相同；以下 scope 名称仅为示例。
+$env:PLATFORM_RESOURCE_SCOPE_BINDINGS='{"ticket:read":"work-orders:read","ticket:export":"work-orders:export","ticket:create":"work-orders:create","ticket:update":"work-orders:update","ticket:delete":"work-orders:delete"}'
 cargo run --locked
 ```
 
 按真实平台地址替换 `3000`。`localhost` 与 `127.0.0.1` 是不同来源。开发仅允许回环 HTTP，远程连接使用 HTTPS；内网主机名的 HTTP 也不会自动放行。API 不接受平台数据库 URL 作为业务库。
 
-启动过程接管或验证合法迁移历史，再提供受保护 API。`GET /work-orders-api/health/live` 只验证进程；`/health/ready` 或 `/health` 检查业务库与迁移，不验证用户的全部权限。
+正常启动只读核验现有迁移历史、checksum 和结构指纹，再提供受保护 API；空库、缺少历史或不匹配基线均拒绝，不接管旧库或自动执行 DDL。`GET /work-orders-api/health/live` 只验证进程；`/health/ready` 或 `/health` 检查业务库与迁移，不验证用户的全部权限。
 
 ## 启动 qiankun 前端
 

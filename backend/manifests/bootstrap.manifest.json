@@ -13,24 +13,84 @@
     "sortOrder": 100,
     "status": "ENABLED"
   },
-  "oauthClient": {
-    "clientName": "work-orders-client",
-    "clientType": "CONFIDENTIAL",
-    "grantTypes": ["client_credentials"],
-    "scopes": ["openid"],
-    "redirectUris": [],
-    "accessTokenValidity": 300,
-    "refreshTokenValidity": 300,
-    "provisioning": "Administrator creates client in the platform UI and stores its generated clientId and one-time secret in the server secret store."
-  },
   "menus": [
-    {"key":"root","parentKey":null,"type":"MENU","title":"工单管理","path":"/micro/work-orders","permission":"","sortOrder":0,"visible":true,"linkTarget":"MICRO"},
-    {"key":"ticket:read","parentKey":"root","type":"MENU","title":"工单详情","path":"/micro/work-orders/tickets/:id","permission":"ticket:read","sortOrder":1,"visible":false,"linkTarget":"MICRO"},
-    {"key":"ticket:create","parentKey":"root","type":"MENU","title":"创建工单","path":"/micro/work-orders/ticket-create","permission":"ticket:create","sortOrder":2,"visible":true,"linkTarget":"MICRO"},
-    {"key":"ticket:update","parentKey":"root","type":"BUTTON","title":"更新工单","path":"","permission":"ticket:update","sortOrder":3,"visible":false,"linkTarget":"BLANK"},
-    {"key":"ticket:delete","parentKey":"root","type":"BUTTON","title":"删除工单","path":"","permission":"ticket:delete","sortOrder":4,"visible":false,"linkTarget":"BLANK"},
-    {"key":"ticket:export","parentKey":"root","type":"BUTTON","title":"导出工单","path":"","permission":"ticket:export","sortOrder":5,"visible":false,"linkTarget":"BLANK"},
-    {"key":"notification:publish","parentKey":"root","type":"BUTTON","title":"发送工单提醒","path":"","permission":"notification:publish","sortOrder":6,"visible":false,"linkTarget":"BLANK"}
+    {
+      "key": "root",
+      "parentKey": null,
+      "type": "MENU",
+      "title": "工单管理",
+      "path": "/micro/work-orders",
+      "permission": "",
+      "sortOrder": 0,
+      "visible": true,
+      "linkTarget": "MICRO"
+    },
+    {
+      "key": "ticket:read",
+      "parentKey": "root",
+      "type": "MENU",
+      "title": "工单详情",
+      "path": "/micro/work-orders/tickets/:id",
+      "permission": "ticket:read",
+      "sortOrder": 1,
+      "visible": false,
+      "linkTarget": "MICRO"
+    },
+    {
+      "key": "ticket:create",
+      "parentKey": "root",
+      "type": "MENU",
+      "title": "创建工单",
+      "path": "/micro/work-orders/ticket-create",
+      "permission": "ticket:create",
+      "sortOrder": 2,
+      "visible": true,
+      "linkTarget": "MICRO"
+    },
+    {
+      "key": "ticket:update",
+      "parentKey": "root",
+      "type": "BUTTON",
+      "title": "更新工单",
+      "path": "",
+      "permission": "ticket:update",
+      "sortOrder": 3,
+      "visible": false,
+      "linkTarget": "BLANK"
+    },
+    {
+      "key": "ticket:delete",
+      "parentKey": "root",
+      "type": "BUTTON",
+      "title": "删除工单",
+      "path": "",
+      "permission": "ticket:delete",
+      "sortOrder": 4,
+      "visible": false,
+      "linkTarget": "BLANK"
+    },
+    {
+      "key": "ticket:export",
+      "parentKey": "root",
+      "type": "BUTTON",
+      "title": "导出工单",
+      "path": "",
+      "permission": "ticket:export",
+      "sortOrder": 5,
+      "visible": false,
+      "linkTarget": "BLANK"
+    },
+    {
+      "key": "notification:publish",
+      "parentKey": "root",
+      "type": "BUTTON",
+      "title": "发送工单提醒",
+      "path": "",
+      "permission": "notification:publish",
+      "sortOrder": 6,
+      "visible": false,
+      "linkTarget": "BLANK"
+    }
   ],
   "grants": []
 }

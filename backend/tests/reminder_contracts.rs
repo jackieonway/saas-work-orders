@@ -12,7 +12,7 @@ use axum::{
     extract::{Request, State},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
-    routing::{any, get, post},
+    routing::{any, post},
     Json, Router,
 };
 use chrono::{SecondsFormat, Utc};
@@ -29,6 +29,7 @@ use uuid::Uuid;
 use work_orders_api::{application, connect_database, initialize_database, Config};
 
 const PREFIX: &str = "/work-orders-api";
+const RESOURCE_SCOPES: &str = r#"{"ticket:read":"work-orders:read","ticket:export":"work-orders:export","ticket:create":"work-orders:create","ticket:update":"work-orders:update","ticket:delete":"work-orders:delete","notification:publish":"work-orders:notification:publish"}"#;
 const SECRET: &str = "phase20-fixture-secret";
 const BASIC: &str = "Basic aW50ZWdyYXRpb246cGhhc2UyMC1maXh0dXJlLXNlY3JldA==";
 
@@ -180,10 +181,14 @@ enum PublishMode {
     Redirect,
     DropAfterPersist,
     GateAfterPersist(Gate),
+    ResultStatus(u16, Value),
+    ResultPatch(Value),
 }
 
 #[derive(Clone)]
 struct Scenario {
+    token_expires_at: i64,
+    authorization_override: Option<Value>,
     identity: Identity,
     permissions: Vec<String>,
     ticket_scope: &'static str,
@@ -202,6 +207,8 @@ struct Scenario {
 impl Scenario {
     fn allowed(identity: Identity) -> Self {
         Self {
+            token_expires_at: Utc::now().timestamp() + 120,
+            authorization_override: None,
             identity,
             permissions: vec!["ticket:read".into(), "notification:publish".into()],
             ticket_scope: "TENANT",
@@ -217,11 +224,52 @@ impl Scenario {
             mode: PublishMode::Normal,
         }
     }
-    fn introspection(&self) -> Value {
-        json!({"active":self.active,"aud":"work-orders","sub":self.identity.user.to_string(),
-            "tenant_id":self.identity.tenant.to_string(),"organization_id":self.identity.org.to_string(),
-            "exp":Utc::now().timestamp()+600,"token_type":"Bearer"})
+    fn introspection(&self, _action: &str) -> Value {
+        let mut value = json!({"active":self.active,"aud":"work-orders",
+            "exp":self.token_expires_at,"token_type":"Bearer","token_use":"app_session",
+            "iss":"urn:saas:platform:internal-capabilities","scope":"app:access","client_id":"work-orders"});
+        value["jti"] = json!("99999999-9999-7999-8999-999999999999");
+        value
     }
+
+    fn external(identity: Identity, publish_scope: bool) -> Self {
+        let mut scenario = Self::allowed(identity);
+        let mut wire = scenario.authorization("read");
+        wire["issuer"] = json!("https://auth.saas.test");
+        wire["tokenUse"] = json!("access_token");
+        wire["clientId"] = json!("88888888-8888-7888-8888-888888888888");
+        wire["sourceApplicationId"] = json!("aaaaaaaa-aaaa-7aaa-8aaa-aaaaaaaaaaaa");
+        wire["introspection"]["token_use"] = json!("access_token");
+        wire["introspection"]["iss"] = wire["issuer"].clone();
+        wire["introspection"]["scope"] = json!(if publish_scope {
+            "work-orders:read work-orders:notification:publish"
+        } else {
+            "work-orders:read"
+        });
+        wire["introspection"]["client_id"] = wire["clientId"].clone();
+        wire["introspection"].as_object_mut().unwrap().remove("jti");
+        wire["introspection"]["sub"] = json!("opaque-pairwise-do-not-parse");
+        scenario.authorization_override = Some(wire);
+        scenario
+    }
+
+    fn authorization(&self, action: &str) -> Value {
+        if let Some(value) = &self.authorization_override {
+            return value.clone();
+        }
+        let context = self.context();
+        let value = json!({"contractVersion":"resource-authorization/1","issuer":"urn:saas:platform:internal-capabilities",
+            "tokenUse":"app_session","subjectMode":"USER","resource":"work-orders","action":action,
+            "targetApplicationId":context["application"]["id"],"audience":"work-orders",
+            "expiresAt":context["expiresAt"],"principal":{"userId":self.identity.user.to_string(),
+                "membershipId":"77777777-7777-7777-8777-777777777777","memberType":"EMPLOYEE",
+                "identityVersion":"1","accountVersion":"1","tenantId":self.identity.tenant.to_string(),
+                "organizationId":self.identity.org.to_string()},
+            "introspection":self.introspection(action),"context":context});
+
+        value
+    }
+
     fn context(&self) -> Value {
         let mut grants = vec![];
         for (include, resource, action, scope, organizations) in [
@@ -272,65 +320,64 @@ struct PublicationCall {
 #[derive(Default)]
 struct PlatformState {
     scenarios: HashMap<String, Scenario>,
-    introspections: usize,
-    contexts: usize,
+    authorizations: usize,
     calls: Vec<PublicationCall>,
-    publications: HashMap<(Uuid, Uuid, Uuid, String), (Value, Value)>,
+    result_calls: Vec<PublicationCall>,
+    publications: HashMap<PublicationNamespace, (Value, Value)>,
     redirect_hits: usize,
 }
 
+type PublicationNamespace = (String, Uuid, Uuid, Uuid, String);
+
 type Shared = Arc<Mutex<PlatformState>>;
 
-async fn introspect(State(shared): State<Shared>, request: Request) -> Response {
+async fn authorize(State(shared): State<Shared>, request: Request) -> Response {
+    assert_eq!(request.method(), Method::POST);
+    assert!(
+        request.uri().query().is_none(),
+        "authorization credentials stay in the form"
+    );
+    assert!(!request.headers().contains_key("cookie"));
     assert_eq!(request.headers().get("authorization").unwrap(), BASIC);
     assert_eq!(
         request.headers().get("content-type").unwrap(),
         "application/x-www-form-urlencoded"
     );
-    let bytes = to_bytes(request.into_body(), 16384).await.unwrap();
-    let fields: Vec<_> = url::form_urlencoded::parse(&bytes).into_owned().collect();
-    assert_eq!(fields.len(), 1);
-    assert_eq!(fields[0].0, "token");
+    let bytes = to_bytes(request.into_body(), 16384)
+        .await
+        .expect("bounded canonical authorization");
+    let pairs: Vec<_> = url::form_urlencoded::parse(&bytes).into_owned().collect();
+    let fields: BTreeMap<_, _> = pairs.iter().cloned().collect();
+    assert_eq!(pairs.len(), 3);
+    assert_eq!(
+        fields.len(),
+        3,
+        "canonical authorization has no duplicate parameters"
+    );
+    assert_eq!(fields.get("resource").map(String::as_str), Some("ticket"));
+    let action = fields.get("action").expect("bound action");
+    assert!(["read", "export", "create", "update", "delete"].contains(&action.as_str()));
     let scenario = {
-        let mut state = shared.lock().unwrap();
-        state.introspections += 1;
-        state.scenarios.get(&fields[0].1).cloned()
+        let mut state = shared.lock().expect("platform state");
+        state.authorizations += 1;
+        state.scenarios.get(fields.get("token").unwrap()).cloned()
     };
-    match scenario {
-        Some(scenario) => Json(scenario.introspection()).into_response(),
-        None => StatusCode::UNAUTHORIZED.into_response(),
-    }
-}
-
-fn token(headers: &HeaderMap) -> String {
-    headers
-        .get("authorization")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.strip_prefix("Bearer "))
-        .unwrap_or_default()
-        .to_owned()
-}
-
-async fn context(State(shared): State<Shared>, request: Request) -> Response {
-    let token = token(request.headers());
-    let scenario = {
-        let mut state = shared.lock().unwrap();
-        state.contexts += 1;
-        state.scenarios.get(&token).cloned()
+    let Some(scenario) = scenario else {
+        return StatusCode::UNAUTHORIZED.into_response();
     };
-    match scenario {
-        Some(scenario) => Json(scenario.context()).into_response(),
-        None => StatusCode::UNAUTHORIZED.into_response(),
-    }
+    Json(scenario.authorization(action)).into_response()
 }
 
-async fn publish(State(shared): State<Shared>, request: Request) -> Response {
+async fn notification_form(request: Request) -> (String, String, Value) {
     assert_eq!(request.method(), Method::POST);
+    assert!(request.uri().query().is_none());
+    assert!(!request.headers().contains_key("cookie"));
+    assert_eq!(request.headers().get_all("authorization").iter().count(), 1);
+    assert_eq!(request.headers().get("authorization").unwrap(), BASIC);
     assert_eq!(
         request.headers().get("content-type").unwrap(),
-        "application/json"
+        "application/x-www-form-urlencoded"
     );
-    let token = token(request.headers());
     let request_id = request
         .headers()
         .get("x-request-id")
@@ -340,7 +387,74 @@ async fn publish(State(shared): State<Shared>, request: Request) -> Response {
         .to_owned();
     assert!(Uuid::parse_str(&request_id).is_ok());
     let body = to_bytes(request.into_body(), 65536).await.unwrap();
-    let payload: Value = serde_json::from_slice(&body).expect("outgoing publication JSON");
+    let pairs: Vec<_> = url::form_urlencoded::parse(&body).into_owned().collect();
+    let fields: BTreeMap<_, _> = pairs.iter().cloned().collect();
+    assert_eq!(pairs.len(), 4);
+    assert_eq!(fields.len(), 4);
+    assert_eq!(fields["resource"], "notification");
+    assert_eq!(fields["action"], "publish");
+    let payload: Value =
+        serde_json::from_str(&fields["request"]).expect("original private publication JSON");
+    (fields["token"].clone(), request_id, payload)
+}
+
+fn namespace(token: &str, scenario: &Scenario, payload: &Value) -> PublicationNamespace {
+    (
+        token.into(),
+        scenario.identity.tenant,
+        scenario.identity.org,
+        scenario.identity.user,
+        payload["idempotencyKey"]
+            .as_str()
+            .expect("original operation key")
+            .into(),
+    )
+}
+
+fn notification_wrapper(publication: Value) -> Value {
+    json!({"contractVersion":"resource-notification/1","publication":publication,"expiresAt":(Utc::now()+chrono::Duration::milliseconds(2500)).to_rfc3339_opts(SecondsFormat::Millis,true)})
+}
+
+async fn result(State(shared): State<Shared>, request: Request) -> Response {
+    let (token, request_id, payload) = notification_form(request).await;
+    let mut state = shared.lock().unwrap();
+    state.result_calls.push(PublicationCall {
+        token: token.clone(),
+        request_id,
+        payload: payload.clone(),
+    });
+    let Some(scenario) = state.scenarios.get(&token).cloned() else {
+        return StatusCode::UNAUTHORIZED.into_response();
+    };
+    if let PublishMode::ResultStatus(status, body) = scenario.mode {
+        return (StatusCode::from_u16(status).unwrap(), Json(body)).into_response();
+    }
+    let Some((original, publication)) = state
+        .publications
+        .get(&namespace(&token, &scenario, &payload))
+    else {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(json!({"code":"NOT_FOUND","message":"original result absent"})),
+        )
+            .into_response();
+    };
+    if original != &payload {
+        return (StatusCode::CONFLICT, Json(json!({"code":"CONFLICT"}))).into_response();
+    }
+    let mut publication = publication.clone();
+    publication["duplicate"] = json!(true);
+    let mut reply = notification_wrapper(publication);
+    if let PublishMode::ResultPatch(patch) = scenario.mode {
+        for (key, value) in patch.as_object().unwrap() {
+            reply[key] = value.clone();
+        }
+    }
+    Json(reply).into_response()
+}
+
+async fn publish(State(shared): State<Shared>, request: Request) -> Response {
+    let (token, request_id, payload) = notification_form(request).await;
     let scenario = {
         let mut state = shared.lock().unwrap();
         state.calls.push(PublicationCall {
@@ -363,16 +477,7 @@ async fn publish(State(shared): State<Shared>, request: Request) -> Response {
         )
             .into_response();
     }
-    let key = payload["idempotencyKey"]
-        .as_str()
-        .expect("publication event key")
-        .to_owned();
-    let namespace = (
-        scenario.identity.tenant,
-        scenario.identity.org,
-        scenario.identity.user,
-        key,
-    );
+    let namespace = namespace(&token, &scenario, &payload);
     let mut result = {
         let mut state = shared.lock().unwrap();
         if let Some((prior, result)) = state.publications.get(&namespace) {
@@ -392,15 +497,15 @@ async fn publish(State(shared): State<Shared>, request: Request) -> Response {
         }
     };
     match scenario.mode {
-        PublishMode::Normal | PublishMode::DropAfterPersist => Json(result).into_response(),
+        PublishMode::Normal | PublishMode::DropAfterPersist | PublishMode::ResultStatus(..) | PublishMode::ResultPatch(..) => Json(notification_wrapper(result)).into_response(),
         PublishMode::Status(_) => unreachable!("status returned before fixture persistence"),
         PublishMode::Patch(patch) => {
             for (key, value) in patch.as_object().unwrap() {
                 result[key] = value.clone();
             }
-            Json(result).into_response()
+            Json(notification_wrapper(result)).into_response()
         }
-        PublishMode::Raw(body) => ([("content-type", "application/json")], body).into_response(),
+        PublishMode::Raw(body) => ([("content-type", "application/json")], format!("{{\"contractVersion\":\"resource-notification/1\",\"expiresAt\":\"{}\",\"publication\":{body}}}",(Utc::now()+chrono::Duration::milliseconds(2500)).to_rfc3339_opts(SecondsFormat::Millis,true))).into_response(),
         PublishMode::Html => (
             [("content-type", "text/html")],
             format!("<html>{SECRET}</html>"),
@@ -408,7 +513,7 @@ async fn publish(State(shared): State<Shared>, request: Request) -> Response {
             .into_response(),
         PublishMode::Oversize => {
             result["padding"] = json!("x".repeat(300_000));
-            Json(result).into_response()
+            Json(notification_wrapper(result)).into_response()
         }
         PublishMode::Redirect => (
             StatusCode::TEMPORARY_REDIRECT,
@@ -418,7 +523,7 @@ async fn publish(State(shared): State<Shared>, request: Request) -> Response {
             .into_response(),
         PublishMode::GateAfterPersist(gate) => {
             gate.wait().await;
-            Json(result).into_response()
+            Json(notification_wrapper(result)).into_response()
         }
     }
 }
@@ -483,18 +588,22 @@ async fn proxy_connection(mut socket: TcpStream, upstream: String, state: Shared
     let status = response.status().as_u16();
     let response_headers = response.headers().clone();
     let body = response.bytes().await.unwrap();
-    let dropped = path == "/api/apps/work-orders/notifications" && status == 200 && {
-        let token = headers
-            .get("authorization")
-            .and_then(|v| v.strip_prefix("Bearer "))
-            .unwrap_or_default();
-        state
-            .lock()
-            .unwrap()
-            .scenarios
-            .get(token)
-            .is_some_and(|s| matches!(s.mode, PublishMode::DropAfterPersist))
-    };
+    let dropped =
+        path == "/internal/platform/apps/work-orders/notifications/publish" && status == 200 && {
+            let fields: HashMap<_, _> =
+                url::form_urlencoded::parse(&bytes[body_start..body_start + length])
+                    .into_owned()
+                    .collect();
+            let token = fields
+                .get("token")
+                .expect("original private publication token");
+            state
+                .lock()
+                .unwrap()
+                .scenarios
+                .get(token)
+                .is_some_and(|s| matches!(s.mode, PublishMode::DropAfterPersist))
+        };
     if dropped {
         return;
     }
@@ -586,9 +695,15 @@ impl Harness {
     async fn configured(f: &Fixture, overrides: &[(&str, &str)]) -> Self {
         let state = Shared::default();
         let platform = Router::new()
-            .route("/oauth/introspect", post(introspect))
-            .route("/api/apps/work-orders/context", get(context))
-            .route("/api/apps/work-orders/notifications", post(publish))
+            .route("/api/apps/work-orders/authorize", post(authorize))
+            .route(
+                "/internal/platform/apps/work-orders/notifications/publish",
+                post(publish),
+            )
+            .route(
+                "/internal/platform/apps/work-orders/notifications/result",
+                post(result),
+            )
             .route("/redirect-trap", any(trap))
             .with_state(state.clone());
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -611,7 +726,9 @@ impl Harness {
             ("PLATFORM_API_ORIGIN", platform_origin.as_str()),
             ("PLATFORM_CLIENT_ID", "integration"),
             ("PLATFORM_CLIENT_SECRET", SECRET),
-            ("PLATFORM_AUTHORIZATION_MODE", "legacy"),
+            ("PLATFORM_AUTHORIZATION_MODE", "canonical"),
+            ("PLATFORM_IDENTITY_ISSUER", "https://auth.saas.test"),
+            ("PLATFORM_RESOURCE_SCOPE_BINDINGS", RESOURCE_SCOPES),
             ("PLATFORM_AUTH_TIMEOUT_MS", "3000"),
             ("WORK_ORDERS_DB_MAX_CONNECTIONS", "2"),
             ("WORK_ORDERS_DB_ACQUIRE_TIMEOUT_MS", "1000"),
@@ -657,15 +774,20 @@ impl Harness {
         self.origin = origin;
         self.tasks.push(task);
     }
-    fn put(&self, token: &str, scenario: Scenario) {
-        self.state
-            .lock()
-            .unwrap()
-            .scenarios
-            .insert(token.to_owned(), scenario);
+    fn put(&self, token: &str, mut scenario: Scenario) {
+        let mut state = self.state.lock().unwrap();
+        // A fixture mode or permission change cannot renew the same original
+        // credential's expiry. New credentials use a new explicit token key.
+        if let Some(original) = state.scenarios.get(token) {
+            scenario.token_expires_at = original.token_expires_at;
+        }
+        state.scenarios.insert(token.to_owned(), scenario);
     }
     fn calls(&self) -> Vec<PublicationCall> {
         self.state.lock().unwrap().calls.clone()
+    }
+    fn results(&self) -> Vec<PublicationCall> {
+        self.state.lock().unwrap().result_calls.clone()
     }
     fn publication_count(&self) -> usize {
         self.state.lock().unwrap().publications.len()
@@ -788,7 +910,12 @@ async fn stable_event_payload_single_publication_and_unchanged_ticket() {
             ]
         );
         assert_eq!(h.publication_count(), 1);
-        assert_eq!(h.calls().len(), 2);
+        assert_eq!(h.calls().len(), 1);
+        assert_eq!(
+            h.results().len(),
+            2,
+            "each attempt checks the original durable result first"
+        );
         assert_eq!(row(&f, id).await, before);
         for call in h.calls() {
             assert_eq!(call.token, "actor");
@@ -799,8 +926,7 @@ async fn stable_event_payload_single_publication_and_unchanged_ticket() {
             );
         }
         let state = h.state.lock().unwrap();
-        assert_eq!(state.introspections, 2);
-        assert_eq!(state.contexts, 2);
+        assert_eq!(state.authorizations, 2);
     })
     .await;
 }
@@ -814,9 +940,9 @@ async fn recipient_selection_and_title_edits_preserve_event_body() {
         assert_eq!(h.calls()[0].payload,expected_payload(id,f.identity,recipient,"assigned-event"));
         sqlx::query("UPDATE public.work_orders SET title='Changed display title',description='Changed',version=version+1,updated_at=statement_timestamp() WHERE id=$1").bind(id).execute(&f.pool).await.unwrap();
         let before=row(&f,id).await;let retry=h.remind("actor",id,"assigned-event").await;assert_eq!(retry.status,200);assert_eq!(retry.json()["duplicate"],true);
-        assert_eq!(h.calls()[0].payload,h.calls()[1].payload);assert_eq!(row(&f,id).await,before);
-        // A historical receipt is not a claim that the recipient is still active;
-        // no directory preflight should block the official platform's receipt.
+        assert_eq!(h.calls()[0].payload,h.results()[1].payload);assert_eq!(h.calls().len(),1);assert_eq!(row(&f,id).await,before);
+        // The private platform result owns the recipient recheck; this consumer
+        // recovers that exact result without another publication or directory guess.
         assert_eq!(h.publication_count(),1);
     }).await;
 }
@@ -1109,12 +1235,12 @@ async fn post_persistence_response_loss_and_timeout_recover_same_event() {
         let mut scenario=Scenario::allowed(f.identity);scenario.mode=PublishMode::DropAfterPersist;h.put("drop",scenario);
         h.remind("drop",id,"lost-event").await.error(503,"REMINDER_RESULT_UNKNOWN");assert_eq!(h.calls().len(),1);assert_eq!(h.publication_count(),1);
         let original=h.calls()[0].payload.clone();h.put("drop",Scenario::allowed(f.identity));let retry=h.remind("drop",id,"lost-event").await;
-        assert_eq!(retry.status,200);assert_eq!(retry.json()["duplicate"],true);assert_eq!(h.calls()[1].payload,original);assert_eq!(h.publication_count(),1);
+        assert_eq!(retry.status,200);assert_eq!(retry.json()["duplicate"],true);assert_eq!(h.results()[1].payload,original);assert_eq!(h.calls().len(),1);assert_eq!(h.publication_count(),1);
         println!("WORK_ORDERS_REMINDER_UNKNOWN_RESULT_PROOF persisted=true same_key=true unchanged_payload=true publication_count=1 no_automatic_retry=true");
         let gate=Gate::new();let mut scenario=Scenario::allowed(f.identity);scenario.mode=PublishMode::GateAfterPersist(gate.clone());h.put("timeout",scenario);
-        let pending=h.spawn_reminder("timeout",id,"timeout-event");gate.observed().await;let timed=pending.await.unwrap();timed.error(503,"REMINDER_RESULT_UNKNOWN");assert_eq!(h.calls().len(),3);assert_eq!(h.publication_count(),2);
+        let pending=h.spawn_reminder("timeout",id,"timeout-event");gate.observed().await;let timed=pending.await.unwrap();timed.error(503,"REMINDER_RESULT_UNKNOWN");assert_eq!(h.calls().len(),2);assert_eq!(h.publication_count(),2);
         gate.release.add_permits(1);h.put("timeout",Scenario::allowed(f.identity));let restored=h.remind("timeout",id,"timeout-event").await;
-        assert_eq!(restored.status,200);assert_eq!(restored.json()["duplicate"],true);assert_eq!(h.calls()[2].payload,h.calls()[3].payload);assert_eq!(h.publication_count(),2);assert_eq!(row(&f,id).await,before);
+        assert_eq!(restored.status,200);assert_eq!(restored.json()["duplicate"],true);assert_eq!(h.calls()[1].payload,h.results()[3].payload);assert_eq!(h.calls().len(),2);assert_eq!(h.publication_count(),2);assert_eq!(row(&f,id).await,before);
     }).await;
 }
 
@@ -1208,7 +1334,7 @@ async fn authorization_revocation_and_context_expiry_cannot_replay_cached_succes
         h.put("actor", scenario);
         h.remind("actor", id, "original-success")
             .await
-            .error(401, "INVALID_CONTEXT");
+            .error(401, "INVALID_APP_TOKEN");
         assert_eq!(h.calls().len(), calls);
         h.put("actor", Scenario::allowed(f.identity));
         assert_eq!(
@@ -1309,8 +1435,193 @@ async fn preparation_commit_failure_and_concurrent_event_conflicts_fail_closed()
         assert_eq!(a.json()["publicationId"], b.json()["publicationId"]);
         assert_ne!(a.json()["duplicate"], b.json()["duplicate"]);
         assert_eq!(race.publication_count(), 2);
-        assert_eq!(race.calls().len(), 3);
+        assert!((2..=3).contains(&race.calls().len()),"a concurrent result lookup may observe the winner before posting");
         assert_eq!(row(&f, id).await, before);
+    })
+    .await;
+}
+
+fn machine_authorization(
+    tenant: Uuid,
+    organizations: &[Uuid],
+    scope: &str,
+    action: &str,
+    application: &str,
+    expires: &str,
+) -> Value {
+    json!({"contractVersion":"resource-authorization/1","issuer":"https://auth.saas.test",
+        "tokenUse":"access_token","subjectMode":"MACHINE","clientId":"88888888-8888-7888-8888-888888888888",
+        "sourceApplicationId":"aaaaaaaa-aaaa-7aaa-8aaa-aaaaaaaaaaaa","targetApplicationId":application,
+        "resource":"work-orders","action":action,"audience":"work-orders","scope":[format!("work-orders:{action}")],
+        "credentialVersion":"1","expiresAt":expires,"delegation":{"delegationId":"bbbbbbbb-bbbb-7bbb-8bbb-bbbbbbbbbbbb",
+            "version":"1","targetApplicationId":application,"tenantId":tenant.to_string(),
+            "organizationId":organizations.first().map(Uuid::to_string),"resource":"ticket","action":action,"scope":scope,
+            "organizationIds":organizations.iter().map(Uuid::to_string).collect::<Vec<_>>(),"expiresAt":expires}})
+}
+
+#[tokio::test]
+#[ignore = "requires owned CI PostgreSQL"]
+async fn canonical_external_user_and_machine_cannot_masquerade_as_internal_publisher() {
+    owned(|f| async move {
+        let h = Harness::new(&f).await;
+        let id = ticket(&f, f.identity, None).await;
+        let before = row(&f, id).await;
+        let mut external = Scenario::allowed(f.identity);
+        let mut wire = external.authorization("read");
+        wire["issuer"] = json!("https://auth.saas.test");
+        wire["tokenUse"] = json!("access_token");
+        wire["clientId"] = json!("88888888-8888-7888-8888-888888888888");
+        wire["sourceApplicationId"] = json!("aaaaaaaa-aaaa-7aaa-8aaa-aaaaaaaaaaaa");
+        wire["introspection"]["token_use"] = json!("access_token");
+        wire["introspection"]["iss"] = json!("https://auth.saas.test");
+        wire["introspection"]["scope"] = json!("work-orders:read");
+        wire["introspection"]["client_id"] = wire["clientId"].clone();
+        wire["introspection"].as_object_mut().unwrap().remove("jti");
+        wire["introspection"]["sub"] = json!("opaque-pairwise-recipient");
+        external.authorization_override = Some(wire);
+        h.put("external", external);
+        h.remind("external", id, "external-reminder")
+            .await
+            .error(401, "INVALID_APP_TOKEN");
+        let mut machine = Scenario::allowed(f.identity);
+        machine.authorization_override = Some(machine_authorization(
+            f.identity.tenant,
+            &[],
+            "TENANT",
+            "read",
+            "33333333-3333-7333-8333-333333333333",
+            &(Utc::now() + chrono::Duration::seconds(25))
+                .to_rfc3339_opts(SecondsFormat::Millis, true),
+        ));
+        h.put("machine", machine);
+        h.remind("machine", id, "machine-reminder")
+            .await
+            .error(403, "OPERATION_DENIED");
+        assert!(h.calls().is_empty());
+        assert_eq!(h.publication_count(), 0);
+        assert_eq!(row(&f, id).await, before);
+        let intents: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM public.work_order_reminder_intents")
+                .fetch_one(&f.pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            intents, 0,
+            "rejected publishers leave no recoverable success intent"
+        );
+    })
+    .await;
+}
+
+#[tokio::test]
+#[ignore = "requires owned CI PostgreSQL"]
+async fn phase18_external_user_publish_scope_and_original_source_are_mandatory() {
+    owned(|f| async move {
+        let h=Harness::new(&f).await;
+        let id=ticket(&f,f.identity,None).await;
+        let original=Scenario::external(f.identity,true);
+        h.put("external-original",original.clone());
+        let first=h.remind("external-original",id,"external-source-bound").await;
+        assert_eq!(first.status,200,"{}",first.text());
+        let retry=h.remind("external-original",id,"external-source-bound").await;
+        assert_eq!(retry.status,200,"{}",retry.text());
+        assert_eq!(retry.json()["publicationId"],first.json()["publicationId"]);
+        assert_eq!(retry.json()["duplicate"],true);
+        assert_eq!(h.calls().len(),1);
+        assert_eq!(h.results().len(),2);
+        assert_eq!(h.calls()[0].token,"external-original","the opaque original credential must reach the private form unchanged");
+        h.put("external-renewed",original.clone());
+        h.remind("external-renewed",id,"external-source-bound").await.error(409,"REMINDER_SOURCE_CHANGED");
+        let mut replaced=original.clone();
+        let wire=replaced.authorization_override.as_mut().unwrap();
+        wire["clientId"]=json!("88888888-8888-7888-8888-888888888889");
+        wire["introspection"]["client_id"]=wire["clientId"].clone();
+        h.put("external-original",replaced);
+        h.remind("external-original",id,"external-source-bound").await.error(409,"REMINDER_SOURCE_CHANGED");
+        assert_eq!(h.calls().len(),1,"replacement credential/source cannot post the original operation");
+        assert_eq!(h.results().len(),2,"replacement credential/source cannot query another source's result");
+        h.put("missing-publish-scope",Scenario::external(f.identity,false));
+        h.remind("missing-publish-scope",id,"unapproved-publish").await.error(401,"INVALID_APP_TOKEN");
+        let intents:i64=sqlx::query_scalar("SELECT count(*) FROM public.work_order_reminder_intents").fetch_one(&f.pool).await.unwrap();
+        assert_eq!(intents,1,"scope-denied publisher cannot create a local success intent");
+        let (digest,binding):(String,String)=sqlx::query_as("SELECT token_digest,source_binding FROM public.work_order_reminder_intents").fetch_one(&f.pool).await.unwrap();
+        assert_eq!(digest.len(),64);assert_eq!(binding.len(),64);assert!(!digest.contains("external-original"));
+        println!("WORK_ORDERS_PHASE18_EXTERNAL_PROOF publish_scope=true original_result_only=true new_token_and_source_conflict=true denied_intents=0");
+    }).await;
+}
+
+#[tokio::test]
+#[ignore = "requires owned CI PostgreSQL"]
+async fn phase18_unknown_private_result_never_becomes_a_publish_retry() {
+    owned(|f| async move {
+        let h = Harness::new(&f).await;
+        let id = ticket(&f, f.identity, None).await;
+        for (index, body) in [
+            json!({"code":"WRONG_CODE","message":SECRET}),
+            json!({"code":"NOT_FOUND","extra":true}),
+            json!({"message":"no exact code"}),
+            json!({"code":null}),
+            json!([]),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let mut scenario = Scenario::allowed(f.identity);
+            scenario.mode = PublishMode::ResultStatus(404, body);
+            h.put("result-fault", scenario);
+            h.remind("result-fault", id, &format!("result-fault-{index}"))
+                .await
+                .error(503, "REMINDER_RESULT_UNKNOWN");
+            assert!(
+                h.calls().is_empty(),
+                "a malformed 404 cannot trigger a publication"
+            );
+        }
+        for (status, expected, code) in [
+            (401, 401, "INVALID_APP_TOKEN"),
+            (403, 403, "DATA_DENIED"),
+            (503, 503, "REMINDER_RESULT_UNKNOWN"),
+        ] {
+            let mut scenario = Scenario::allowed(f.identity);
+            scenario.mode =
+                PublishMode::ResultStatus(status, json!({"code":"NOT_FOUND","message":SECRET}));
+            h.put("result-fault", scenario);
+            h.remind("result-fault", id, &format!("result-status-{status}"))
+                .await
+                .error(expected, code);
+            assert!(
+                h.calls().is_empty(),
+                "only exact authenticated 404 authorizes the original publish call"
+            );
+        }
+        assert_eq!(h.remind("actor", id, "bounded-result").await.status, 200);
+        let publication = h.calls()[0].payload.clone();
+        for patch in [
+            json!({"contractVersion":"old/1"}),
+            json!({"expiresAt":(Utc::now()+chrono::Duration::seconds(10)).to_rfc3339()}),
+            json!({"expiresAt":(Utc::now()-chrono::Duration::seconds(1)).to_rfc3339()}),
+            json!({"publication":null}),
+            json!({"unknown":true}),
+        ] {
+            let mut scenario = Scenario::allowed(f.identity);
+            scenario.mode = PublishMode::ResultPatch(patch);
+            h.put("actor", scenario);
+            h.remind("actor", id, "bounded-result")
+                .await
+                .error(503, "REMINDER_RESULT_UNKNOWN");
+            assert_eq!(
+                h.calls().len(),
+                1,
+                "invalid original-result wrapper cannot post again"
+            );
+        }
+        h.put("actor", Scenario::allowed(f.identity));
+        let recovered = h.remind("actor", id, "bounded-result").await;
+        assert_eq!(recovered.status, 200);
+        assert_eq!(recovered.json()["duplicate"], true);
+        assert_eq!(h.results().last().unwrap().payload, publication);
+        assert_eq!(h.calls().len(), 1);
+        assert_eq!(h.publication_count(), 1);
     })
     .await;
 }

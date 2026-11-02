@@ -54,6 +54,14 @@ pub(crate) fn conflict() -> ApiError {
     )
 }
 
+pub(crate) fn source_changed() -> ApiError {
+    ApiError::new(
+        409,
+        "REMINDER_SOURCE_CHANGED",
+        "登录会话或业务身份已变更，请先核实原提醒结果，再明确发起新的提醒",
+    )
+}
+
 pub(crate) async fn send(
     pool: &PgPool,
     auth: &ReminderAuthorized,
@@ -66,7 +74,7 @@ pub(crate) async fn send(
     auth.assert_fresh()?;
     let id = dto::uuid(ticket_id).ok_or_else(ApiError::validation)?;
     let request = dto::request(body)?;
-    let prepared = store::claim(pool, auth, id, &request.idempotency_key).await?;
+    let prepared = store::claim(pool, auth, token, id, &request.idempotency_key).await?;
     // claim consumes and commits its transaction before returning. No connection
     // or mutable work-order guard can be held across the platform request.
     auth.assert_fresh()?;

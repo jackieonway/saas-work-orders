@@ -10,7 +10,6 @@ fn fixture() -> (i64, Value, Value) {
         crate::uuid_v7::fixture(3),
         crate::uuid_v7::fixture(4),
     );
-    let intro = json!({"active":true,"aud":"work-orders","sub":user.to_string(),"tenant_id":tenant.to_string(),"organization_id":org.to_string(),"token_type":"Bearer","exp":now/1000+120});
     let context = json!({"contractVersion":"1.0","appCode":"work-orders","contextVersion":"a".repeat(64),
         "expiresAt":chrono::DateTime::from_timestamp_millis(now+20_000).unwrap().to_rfc3339(),
         "user":{"id":user.to_string(),"username":"actor"},"tenant":{"id":tenant.to_string()},
@@ -19,20 +18,27 @@ fn fixture() -> (i64, Value, Value) {
         "permissions":["ticket:read","notification:publish"],"dataGrants":[
             {"resource":"ticket","action":"read","tenantId":tenant.to_string(),"subjectUserId":user.to_string(),"scope":"SELF","organizationIds":[]},
             {"resource":"notification","action":"publish","tenantId":tenant.to_string(),"subjectUserId":user.to_string(),"scope":"TENANT","organizationIds":[]}]});
-    (now, intro, context)
+    let mut reply = super::tests::resource_reply(&context, super::Action::Read, now);
+    reply["targetApplicationId"] = json!(app.to_string());
+    reply["principal"]["userId"] = json!(user.to_string());
+    reply["principal"]["tenantId"] = json!(tenant.to_string());
+    reply["principal"]["organizationId"] = json!(org.to_string());
+    (now, reply, context)
 }
 
 fn authorize(
-    intro: &Value,
+    reply: &Value,
     context: &Value,
     now: i64,
 ) -> Result<ReminderAuthorized, crate::error::ApiError> {
-    policy::validate_reminder(&policy::validate_intro(intro, now)?, context, now)
+    let mut value = reply.clone();
+    value["context"] = context.clone();
+    policy::validate_reminder_authorization(&value, now, None, None, None)
 }
 
 #[test]
 fn reminder_requires_both_operations_and_independent_identity_bound_grants() {
-    let (now, intro, original) = fixture();
+    let (now, reply, original) = fixture();
     for permission in ["ticket:read", "notification:publish"] {
         let mut context = original.clone();
         context["permissions"]
@@ -40,7 +46,7 @@ fn reminder_requires_both_operations_and_independent_identity_bound_grants() {
             .unwrap()
             .retain(|item| item != permission);
         assert_eq!(
-            authorize(&intro, &context, now).err().unwrap().code(),
+            authorize(&reply, &context, now).err().unwrap().code(),
             "OPERATION_DENIED"
         );
     }
@@ -48,7 +54,7 @@ fn reminder_requires_both_operations_and_independent_identity_bound_grants() {
         let mut context = original.clone();
         context["dataGrants"].as_array_mut().unwrap().remove(index);
         assert_eq!(
-            authorize(&intro, &context, now).err().unwrap().code(),
+            authorize(&reply, &context, now).err().unwrap().code(),
             "DATA_DENIED"
         );
     }
@@ -56,7 +62,7 @@ fn reminder_requires_both_operations_and_independent_identity_bound_grants() {
         let mut context = original.clone();
         context["dataGrants"][1][field] = json!(crate::uuid_v7::fixture(99).to_string());
         assert_eq!(
-            authorize(&intro, &context, now).err().unwrap().code(),
+            authorize(&reply, &context, now).err().unwrap().code(),
             "DATA_DENIED"
         );
     }
@@ -67,14 +73,14 @@ fn reminder_requires_both_operations_and_independent_identity_bound_grants() {
         .unwrap()
         .push(duplicate);
     assert_eq!(
-        authorize(&intro, &context, now).err().unwrap().code(),
+        authorize(&reply, &context, now).err().unwrap().code(),
         "DATA_DENIED"
     );
 }
 
 #[test]
 fn notification_scopes_intersect_hard_ceiling_without_expanding_ticket_self() {
-    let (now, intro, original) = fixture();
+    let (now, reply, original) = fixture();
     let (actor, current, child, peer) = (
         crate::uuid_v7::fixture(1),
         crate::uuid_v7::fixture(3),
@@ -95,7 +101,7 @@ fn notification_scopes_intersect_hard_ceiling_without_expanding_ticket_self() {
         let mut context = original.clone();
         context["dataGrants"][1]["scope"] = json!(scope);
         context["dataGrants"][1]["organizationIds"] = ids;
-        let auth = authorize(&intro, &context, now).unwrap();
+        let auth = authorize(&reply, &context, now).unwrap();
         assert_eq!(auth.read().scope(), Scope::SelfOnly);
         assert_eq!(auth.application_id(), crate::uuid_v7::fixture(4));
         assert!(auth.assert_recipient(current, actor).is_ok());
@@ -111,17 +117,17 @@ fn notification_scopes_intersect_hard_ceiling_without_expanding_ticket_self() {
 
 #[test]
 fn notification_missing_ceiling_fails_closed_and_explicit_null_is_preserved() {
-    let (now, intro, mut context) = fixture();
+    let (now, reply, mut context) = fixture();
     context
         .as_object_mut()
         .unwrap()
         .remove("organizationScopeIds");
-    assert!(authorize(&intro, &context, now)
+    assert!(authorize(&reply, &context, now)
         .unwrap()
         .assert_recipient(crate::uuid_v7::fixture(5), crate::uuid_v7::fixture(1))
         .is_err());
     context["organizationScopeIds"] = Value::Null;
-    assert!(authorize(&intro, &context, now)
+    assert!(authorize(&reply, &context, now)
         .unwrap()
         .assert_recipient(crate::uuid_v7::fixture(6), crate::uuid_v7::fixture(99))
         .is_ok());

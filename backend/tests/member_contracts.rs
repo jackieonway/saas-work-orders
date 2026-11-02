@@ -12,7 +12,7 @@ use axum::{
     extract::{Request, State},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
-    routing::{any, get, post},
+    routing::{any, post},
     Json, Router,
 };
 use chrono::{SecondsFormat, Utc};
@@ -28,6 +28,7 @@ use uuid::Uuid;
 use work_orders_api::{application, connect_database, initialize_database, Config};
 
 const PREFIX: &str = "/work-orders-api";
+const RESOURCE_SCOPES: &str = r#"{"ticket:read":"work-orders:read","ticket:export":"work-orders:export","ticket:create":"work-orders:create","ticket:update":"work-orders:update","ticket:delete":"work-orders:delete"}"#;
 const SECRET: &str = "phase19-fixture-secret";
 const BASIC: &str = "Basic aW50ZWdyYXRpb246cGhhc2UxOS1maXh0dXJlLXNlY3JldA==";
 const RECEIPTS: &str = "public.work_order_create_idempotency";
@@ -167,6 +168,8 @@ impl Gate {
 
 #[derive(Clone)]
 struct Scenario {
+    token_expires_at: i64,
+    authorization_override: Option<Value>,
     identity: Identity,
     member_type: &'static str,
     permissions: Vec<String>,
@@ -185,6 +188,8 @@ impl Scenario {
     fn allowed(identity: Identity) -> Self {
         let actions = ["read", "export", "create", "update", "delete"];
         Self {
+            token_expires_at: Utc::now().timestamp() + 120,
+            authorization_override: None,
             identity,
             member_type: "EMPLOYEE",
             permissions: actions.iter().map(|a| format!("ticket:{a}")).collect(),
@@ -200,10 +205,30 @@ impl Scenario {
         }
     }
 
-    fn introspection(&self) -> Value {
-        json!({"active":true,"aud":"work-orders","sub":self.identity.user.to_string(),
-            "tenant_id":self.identity.tenant.to_string(),"organization_id":self.identity.org.to_string(),
-            "exp":Utc::now().timestamp()+600,"token_type":"Bearer"})
+    fn introspection(&self, action: &str) -> Value {
+        let mut value = json!({"active":true,"aud":"work-orders",
+            "exp":self.token_expires_at,"token_type":"Bearer","token_use":"access_token",
+            "iss":"https://auth.saas.test","scope":format!("work-orders:{action}"),"client_id":"88888888-8888-7888-8888-888888888888"});
+        value["sub"] = json!("opaque-pairwise-subject-without-uuid");
+        value
+    }
+
+    fn authorization(&self, action: &str) -> Value {
+        if let Some(value) = &self.authorization_override {
+            return value.clone();
+        }
+        let context = self.context();
+        let mut value = json!({"contractVersion":"resource-authorization/1","issuer":"https://auth.saas.test",
+            "tokenUse":"access_token","subjectMode":"USER","resource":"work-orders","action":action,
+            "targetApplicationId":context["application"]["id"],"audience":"work-orders",
+            "expiresAt":context["expiresAt"],"principal":{"userId":self.identity.user.to_string(),
+                "membershipId":"77777777-7777-7777-8777-777777777777","memberType":self.member_type,
+                "identityVersion":"1","accountVersion":"1","tenantId":self.identity.tenant.to_string(),
+                "organizationId":self.identity.org.to_string()},
+            "introspection":self.introspection(action),"context":context});
+        value["clientId"] = json!("88888888-8888-7888-8888-888888888888");
+        value["sourceApplicationId"] = json!("aaaaaaaa-aaaa-7aaa-8aaa-aaaaaaaaaaaa");
+        value
     }
 
     fn context(&self) -> Value {
@@ -227,8 +252,7 @@ impl Scenario {
 #[derive(Default)]
 struct PlatformState {
     scenarios: HashMap<String, Scenario>,
-    introspections: usize,
-    contexts: usize,
+    authorizations: usize,
     members: usize,
     member_records: HashMap<(Uuid, Uuid, Uuid), MemberRecord>,
     member_calls: Vec<MemberCall>,
@@ -270,7 +294,13 @@ struct MemberCall {
 
 type Shared = Arc<Mutex<PlatformState>>;
 
-async fn introspect(State(shared): State<Shared>, request: Request) -> Response {
+async fn authorize(State(shared): State<Shared>, request: Request) -> Response {
+    assert_eq!(request.method(), Method::POST);
+    assert!(
+        request.uri().query().is_none(),
+        "authorization credentials stay in the form"
+    );
+    assert!(!request.headers().contains_key("cookie"));
     assert_eq!(request.headers().get("authorization").unwrap(), BASIC);
     assert_eq!(
         request.headers().get("content-type").unwrap(),
@@ -278,73 +308,51 @@ async fn introspect(State(shared): State<Shared>, request: Request) -> Response 
     );
     let bytes = to_bytes(request.into_body(), 16384)
         .await
-        .expect("bounded fixture introspection");
-    let fields: Vec<_> = url::form_urlencoded::parse(&bytes).into_owned().collect();
-    assert_eq!(fields.len(), 1);
-    assert_eq!(fields[0].0, "token");
+        .expect("bounded canonical authorization");
+    let pairs: Vec<_> = url::form_urlencoded::parse(&bytes).into_owned().collect();
+    let fields: BTreeMap<_, _> = pairs.iter().cloned().collect();
+    assert_eq!(pairs.len(), 3);
+    assert_eq!(
+        fields.len(),
+        3,
+        "canonical authorization has no duplicate parameters"
+    );
+    assert_eq!(fields.get("resource").map(String::as_str), Some("ticket"));
+    let action = fields.get("action").expect("bound action");
+    assert!(["read", "export", "create", "update", "delete"].contains(&action.as_str()));
     let scenario = {
         let mut state = shared.lock().expect("platform state");
-        state.introspections += 1;
-        state.scenarios.get(&fields[0].1).cloned()
-    };
-    match scenario {
-        Some(scenario) => Json(scenario.introspection()).into_response(),
-        None => StatusCode::UNAUTHORIZED.into_response(),
-    }
-}
-
-async fn context(State(shared): State<Shared>, request: Request) -> Response {
-    let token = request
-        .headers()
-        .get("authorization")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.strip_prefix("Bearer "))
-        .unwrap_or_default();
-    let scenario = {
-        let mut state = shared.lock().expect("platform state");
-        state.contexts += 1;
-        state.scenarios.get(token).cloned()
+        state.authorizations += 1;
+        state.scenarios.get(fields.get("token").unwrap()).cloned()
     };
     let Some(scenario) = scenario else {
         return StatusCode::UNAUTHORIZED.into_response();
     };
-    // The platform is authoritative for the actor's current identity. Existing
-    // employee roles on the same account cannot authorize a customer context.
     if scenario.member_type != "EMPLOYEE" {
-        return StatusCode::FORBIDDEN.into_response();
+        return (StatusCode::FORBIDDEN, Json(json!({"code":"FORBIDDEN"}))).into_response();
     }
-    Json(scenario.context()).into_response()
+    Json(scenario.authorization(action)).into_response()
+}
+
+fn directory(data: Value) -> Value {
+    json!({"contractVersion":"resource-directory/1","directory":"members",
+        "expiresAt":(Utc::now()+chrono::Duration::seconds(3)).to_rfc3339_opts(SecondsFormat::Millis,true),
+        "data":data})
 }
 
 async fn members(State(shared): State<Shared>, request: Request) -> Response {
-    assert_eq!(request.method(), Method::GET);
-    let token = request
-        .headers()
-        .get("authorization")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.strip_prefix("Bearer "))
-        .expect("member request uses application bearer")
-        .to_owned();
-    let pairs: Vec<_> =
-        url::form_urlencoded::parse(request.uri().query().unwrap_or_default().as_bytes())
-            .into_owned()
-            .collect();
-    let query: BTreeMap<_, _> = pairs.iter().cloned().collect();
-    assert_eq!(
-        pairs.len(),
-        query.len(),
-        "outgoing member query has no duplicates"
+    assert_eq!(request.method(), Method::POST);
+    assert!(
+        request.uri().query().is_none(),
+        "directory credentials never enter the URL"
     );
-    assert_eq!(query.get("resource").map(String::as_str), Some("ticket"));
-    let action = query.get("action").expect("bound member action").clone();
-    assert!(matches!(action.as_str(), "create" | "update"));
-    let organization = Uuid::parse_str(query.get("organizationId").unwrap()).unwrap();
-    let user = request
-        .uri()
-        .path()
-        .strip_prefix("/api/apps/work-orders/members/")
-        .map(|id| Uuid::parse_str(id).expect("canonical member path"));
-    assert_eq!(query.len(), if user.is_some() { 3 } else { 6 });
+    assert_eq!(request.headers().get("authorization").unwrap(), BASIC);
+    assert_eq!(
+        request.headers().get("content-type").unwrap(),
+        "application/x-www-form-urlencoded"
+    );
+    assert!(!request.headers().contains_key("cookie"));
+    let path = request.uri().path().to_owned();
     let request_id = request
         .headers()
         .get("x-request-id")
@@ -352,6 +360,27 @@ async fn members(State(shared): State<Shared>, request: Request) -> Response {
         .to_str()
         .unwrap()
         .to_owned();
+    let bytes = to_bytes(request.into_body(), 32768)
+        .await
+        .expect("bounded private member form");
+    let pairs: Vec<_> = url::form_urlencoded::parse(&bytes).into_owned().collect();
+    let mut query: BTreeMap<_, _> = pairs.iter().cloned().collect();
+    assert_eq!(
+        pairs.len(),
+        query.len(),
+        "outgoing member form has no duplicates"
+    );
+    let token = query
+        .remove("token")
+        .expect("original directory credential");
+    assert_eq!(query.get("resource").map(String::as_str), Some("ticket"));
+    let action = query.get("action").expect("bound member action").clone();
+    assert!(matches!(action.as_str(), "create" | "update"));
+    let organization = Uuid::parse_str(query.get("organizationId").unwrap()).unwrap();
+    let user = path
+        .strip_prefix("/internal/platform/apps/work-orders/members/")
+        .map(|id| Uuid::parse_str(id).expect("canonical member path"));
+    assert_eq!(query.len(), if user.is_some() { 3 } else { 6 });
     assert!(Uuid::parse_str(&request_id).is_ok());
     let scenario = {
         let mut state = shared.lock().unwrap();
@@ -418,13 +447,13 @@ async fn members(State(shared): State<Shared>, request: Request) -> Response {
         }
     };
     match scenario.member_mode {
-        MemberMode::Normal => Json(body).into_response(),
+        MemberMode::Normal => Json(directory(body)).into_response(),
         MemberMode::Status(status) => StatusCode::from_u16(status).unwrap().into_response(),
         MemberMode::Patch(patch) => {
             for (key, value) in patch.as_object().expect("member response patch") {
                 body[key] = value.clone();
             }
-            Json(body).into_response()
+            Json(directory(body)).into_response()
         }
         MemberMode::Malformed => (
             [("content-type", "application/json")],
@@ -510,10 +539,12 @@ impl Harness {
     async fn configured(f: &Fixture, overrides: &[(&str, &str)]) -> Self {
         let state = Shared::default();
         let platform = Router::new()
-            .route("/oauth/introspect", post(introspect))
-            .route("/api/apps/work-orders/context", get(context))
-            .route("/api/apps/work-orders/members", get(members))
-            .route("/api/apps/work-orders/members/{id}", get(members))
+            .route("/api/apps/work-orders/authorize", post(authorize))
+            .route("/internal/platform/apps/work-orders/members", post(members))
+            .route(
+                "/internal/platform/apps/work-orders/members/{id}",
+                post(members),
+            )
             .route("/redirect-trap", any(redirect_trap))
             .with_state(state.clone());
         let listener = TcpListener::bind("127.0.0.1:0")
@@ -526,7 +557,9 @@ impl Harness {
             ("PLATFORM_API_ORIGIN", platform_origin.as_str()),
             ("PLATFORM_CLIENT_ID", "integration"),
             ("PLATFORM_CLIENT_SECRET", SECRET),
-            ("PLATFORM_AUTHORIZATION_MODE", "legacy"),
+            ("PLATFORM_AUTHORIZATION_MODE", "canonical"),
+            ("PLATFORM_IDENTITY_ISSUER", "https://auth.saas.test"),
+            ("PLATFORM_RESOURCE_SCOPE_BINDINGS", RESOURCE_SCOPES),
             ("PLATFORM_AUTH_TIMEOUT_MS", "3000"),
             ("WORK_ORDERS_DB_MAX_CONNECTIONS", "2"),
             ("WORK_ORDERS_DB_ACQUIRE_TIMEOUT_MS", "1000"),
@@ -1618,6 +1651,59 @@ async fn current_grant_or_membership_revocation_next_request() {
         assert_eq!(row(&f, &id).await["version"], 1);
         assert_eq!(row(&f, &id).await["assignee_user_id"], Value::Null);
         assert_eq!(counts(&f).await, (1, 1));
+    })
+    .await;
+}
+
+fn machine_authorization(
+    tenant: Uuid,
+    organizations: &[Uuid],
+    scope: &str,
+    action: &str,
+    application: &str,
+    expires: &str,
+) -> Value {
+    json!({"contractVersion":"resource-authorization/1","issuer":"https://auth.saas.test",
+        "tokenUse":"access_token","subjectMode":"MACHINE","clientId":"88888888-8888-7888-8888-888888888888",
+        "sourceApplicationId":"aaaaaaaa-aaaa-7aaa-8aaa-aaaaaaaaaaaa","targetApplicationId":application,
+        "resource":"work-orders","action":action,"audience":"work-orders","scope":[format!("work-orders:{action}")],
+        "credentialVersion":"1","expiresAt":expires,"delegation":{"delegationId":"bbbbbbbb-bbbb-7bbb-8bbb-bbbbbbbbbbbb",
+            "version":"1","targetApplicationId":application,"tenantId":tenant.to_string(),
+            "organizationId":organizations.first().map(Uuid::to_string),"resource":"ticket","action":action,"scope":scope,
+            "organizationIds":organizations.iter().map(Uuid::to_string).collect::<Vec<_>>(),"expiresAt":expires}})
+}
+
+#[tokio::test]
+#[ignore = "requires owned CI PostgreSQL"]
+async fn canonical_machine_cannot_enter_person_directory_or_assignment() {
+    owned(|f| async move {
+        let h = Harness::new(&f).await;
+        let expiry = (Utc::now() + chrono::Duration::seconds(25))
+            .to_rfc3339_opts(SecondsFormat::Millis, true);
+        let mut scenario = Scenario::allowed(f.identity);
+        scenario.authorization_override = Some(machine_authorization(
+            f.identity.tenant,
+            &[],
+            "TENANT",
+            "create",
+            "33333333-3333-7333-8333-333333333333",
+            &expiry,
+        ));
+        h.put("machine", scenario);
+        h.get("machine", "/assignees?action=create")
+            .await
+            .error(403, "OPERATION_DENIED");
+        h.request(
+            Method::POST,
+            "machine",
+            "/tickets",
+            Some("machine-assignment"),
+            json!({"title":"Denied","assigneeUserId":Uuid::now_v7().to_string()}),
+        )
+        .await
+        .error(403, "OPERATION_DENIED");
+        assert!(h.member_calls().is_empty());
+        assert_eq!(counts(&f).await, (0, 0));
     })
     .await;
 }

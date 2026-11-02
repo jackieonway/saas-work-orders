@@ -15,11 +15,11 @@ use super::{Action, MemberListQuery};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ResponseKind {
-    Authorization,
     CombinedAuthorization,
     MemberList,
     SingleMember,
     Reminder,
+    ReminderResult,
 }
 
 const MAX_BODY: usize = 256 * 1024;
@@ -74,18 +74,13 @@ impl PlatformClient {
         })
     }
 
-    pub(super) async fn authorization_pair(
+    pub(super) async fn authorization(
         &self,
         token: &str,
         resource: &str,
         action: &str,
         request_id: &str,
-    ) -> Result<(Value, Value), ApiError> {
-        if self.settings.legacy_authorization {
-            let intro = self.introspect(token, request_id).await?;
-            super::policy::validate_intro(&intro, super::policy::now_millis())?;
-            return Ok((intro, self.context(token, request_id).await?));
-        }
+    ) -> Result<Value, ApiError> {
         let url = self
             .settings
             .origin
@@ -101,48 +96,24 @@ impl PlatformClient {
                 ResponseKind::CombinedAuthorization,
             )
             .await?;
-        if value.get("contractVersion").and_then(Value::as_str) != Some("1.0")
-            || !value["introspection"].is_object()
-            || !value["context"].is_object()
-        {
-            return Err(ApiError::platform_unavailable());
-        }
-        Ok((value["introspection"].clone(), value["context"].clone()))
+        Ok(value)
     }
 
-    pub(super) async fn introspect(
-        &self,
-        token: &str,
-        request_id: &str,
-    ) -> Result<Value, ApiError> {
-        let url = self
-            .settings
-            .origin
-            .join("/oauth/introspect")
-            .map_err(|_| ApiError::platform_unavailable())?;
-        self.json(
-            self.http
-                .post(url)
-                .basic_auth(&self.settings.client_id, Some(&self.settings.client_secret))
-                .form(&[("token", token)]),
-            request_id,
-            ResponseKind::Authorization,
-        )
-        .await
+    pub(super) fn identity_issuer(&self) -> Option<&str> {
+        self.settings.identity_issuer.as_deref()
+    }
+    pub(super) fn required_scope(&self, action: Action) -> Option<&str> {
+        self.settings
+            .scope_bindings
+            .get(&format!("ticket:{}", action.as_str()))
+            .map(String::as_str)
     }
 
-    pub(super) async fn context(&self, token: &str, request_id: &str) -> Result<Value, ApiError> {
-        let url = self
-            .settings
-            .origin
-            .join("/api/apps/work-orders/context")
-            .map_err(|_| ApiError::platform_unavailable())?;
-        self.json(
-            self.http.get(url).bearer_auth(token),
-            request_id,
-            ResponseKind::Authorization,
-        )
-        .await
+    pub(super) fn notification_scope(&self) -> Option<&str> {
+        self.settings
+            .scope_bindings
+            .get("notification:publish")
+            .map(String::as_str)
     }
 
     pub(super) async fn members(
@@ -150,21 +121,25 @@ impl PlatformClient {
         token: &str,
         query: &MemberListQuery<'_>,
         request_id: &str,
-    ) -> Result<Value, ApiError> {
+    ) -> Result<(Value, std::time::Instant), ApiError> {
         let url = self
             .settings
             .origin
-            .join("/api/apps/work-orders/members")
+            .join("/internal/platform/apps/work-orders/members")
             .map_err(|_| ApiError::platform_unavailable())?;
-        self.json(
-            self.http.get(url).bearer_auth(token).query(&[
-                ("resource", "ticket".to_owned()),
-                ("action", query.action.as_str().to_owned()),
-                ("organizationId", query.organization.to_string()),
-                ("page", query.page.to_string()),
-                ("size", query.size.to_string()),
-                ("q", query.q.to_owned()),
-            ]),
+        self.directory(
+            self.http
+                .post(url)
+                .basic_auth(&self.settings.client_id, Some(&self.settings.client_secret))
+                .form(&[
+                    ("token", token.to_owned()),
+                    ("resource", "ticket".to_owned()),
+                    ("action", query.action.as_str().to_owned()),
+                    ("organizationId", query.organization.to_string()),
+                    ("page", query.page.to_string()),
+                    ("size", query.size.to_string()),
+                    ("q", query.q.to_owned()),
+                ]),
             request_id,
             ResponseKind::MemberList,
         )
@@ -178,18 +153,24 @@ impl PlatformClient {
         user: uuid::Uuid,
         action: Action,
         request_id: &str,
-    ) -> Result<Value, ApiError> {
+    ) -> Result<(Value, std::time::Instant), ApiError> {
         let url = self
             .settings
             .origin
-            .join(&format!("/api/apps/work-orders/members/{user}"))
+            .join(&format!(
+                "/internal/platform/apps/work-orders/members/{user}"
+            ))
             .map_err(|_| ApiError::platform_unavailable())?;
-        self.json(
-            self.http.get(url).bearer_auth(token).query(&[
-                ("resource", "ticket".to_owned()),
-                ("action", action.as_str().to_owned()),
-                ("organizationId", organization.to_string()),
-            ]),
+        self.directory(
+            self.http
+                .post(url)
+                .basic_auth(&self.settings.client_id, Some(&self.settings.client_secret))
+                .form(&[
+                    ("token", token.to_owned()),
+                    ("resource", "ticket".to_owned()),
+                    ("action", action.as_str().to_owned()),
+                    ("organizationId", organization.to_string()),
+                ]),
             request_id,
             ResponseKind::SingleMember,
         )
@@ -203,21 +184,70 @@ impl PlatformClient {
         request_id: &str,
         attempt: &crate::reminders::Attempt,
     ) -> Result<crate::reminders::Publication, ApiError> {
+        let started = std::time::Instant::now();
+        // A retry first asks for the original durable result. Only a precise
+        // authenticated NOT_FOUND permits publication of the same request.
+        let previous = self
+            .response_body(
+                self.notification_request("result", token, json)?,
+                request_id,
+                ResponseKind::ReminderResult,
+                None,
+            )
+            .await;
+        match previous {
+            Ok(bytes) => return decode_notification(&bytes, started, self.settings.timeout),
+            Err(error) if error.code() == "NOTIFICATION_RESULT_NOT_FOUND" => {}
+            Err(error) => return Err(error),
+        }
+        let bytes = self
+            .response_body(
+                self.notification_request("publish", token, json)?,
+                request_id,
+                ResponseKind::Reminder,
+                Some(attempt),
+            )
+            .await?;
+        decode_notification(&bytes, started, self.settings.timeout)
+    }
+
+    fn notification_request(
+        &self,
+        operation: &str,
+        token: &str,
+        json: &str,
+    ) -> Result<RequestBuilder, ApiError> {
+        let path = match operation {
+            "publish" => "/internal/platform/apps/work-orders/notifications/publish",
+            "result" => "/internal/platform/apps/work-orders/notifications/result",
+            _ => return Err(crate::reminders::preparation_unknown()),
+        };
         let url = self
             .settings
             .origin
-            .join("/api/apps/work-orders/notifications")
+            .join(path)
             .map_err(|_| crate::reminders::preparation_unknown())?;
-        let request = self
+        Ok(self
             .http
             .post(url)
-            .bearer_auth(token)
-            .header(CONTENT_TYPE, "application/json")
-            .body(json.to_owned());
-        let bytes = self
-            .response_body(request, request_id, ResponseKind::Reminder, Some(attempt))
-            .await?;
-        crate::reminders::Publication::from_bytes(&bytes)
+            .basic_auth(&self.settings.client_id, Some(&self.settings.client_secret))
+            .form(&[
+                ("token", token),
+                ("resource", "notification"),
+                ("action", "publish"),
+                ("request", json),
+            ]))
+    }
+
+    async fn directory(
+        &self,
+        request: RequestBuilder,
+        request_id: &str,
+        kind: ResponseKind,
+    ) -> Result<(Value, std::time::Instant), ApiError> {
+        let started = std::time::Instant::now();
+        let value = self.json(request, request_id, kind).await?;
+        decode_directory(value, started, self.settings.timeout)
     }
 
     async fn json(
@@ -266,8 +296,11 @@ impl PlatformClient {
             .map_err(|_| failure(kind))?;
         let authorization_denial = response.status() == StatusCode::FORBIDDEN
             && kind == ResponseKind::CombinedAuthorization;
+        let result_missing =
+            response.status() == StatusCode::NOT_FOUND && kind == ResponseKind::ReminderResult;
         match response.status() {
             StatusCode::OK => {}
+            StatusCode::NOT_FOUND if result_missing => {}
             StatusCode::UNAUTHORIZED => return Err(ApiError::invalid_token()),
             StatusCode::FORBIDDEN if !authorization_denial => return Err(ApiError::data_denied()),
             StatusCode::FORBIDDEN => {}
@@ -285,15 +318,12 @@ impl PlatformClient {
                     "通知接收人不存在或不在当前授权范围内",
                 ))
             }
-            StatusCode::CONFLICT if kind == ResponseKind::Reminder => {
+            StatusCode::CONFLICT
+                if matches!(kind, ResponseKind::Reminder | ResponseKind::ReminderResult) =>
+            {
                 return Err(crate::reminders::conflict())
             }
-            StatusCode::BAD_REQUEST
-                if !matches!(
-                    kind,
-                    ResponseKind::Authorization | ResponseKind::CombinedAuthorization
-                ) =>
-            {
+            StatusCode::BAD_REQUEST if !matches!(kind, ResponseKind::CombinedAuthorization) => {
                 return Err(ApiError::validation())
             }
             _ => return Err(failure(kind)),
@@ -317,6 +347,24 @@ impl PlatformClient {
             }
             body.extend_from_slice(&chunk);
         }
+        if result_missing {
+            #[derive(serde::Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct Missing {
+                code: String,
+                #[serde(default, rename = "message")]
+                _message: Option<String>,
+            }
+            let missing: Missing = serde_json::from_slice(&body).map_err(|_| failure(kind))?;
+            if missing.code != "NOT_FOUND" {
+                return Err(failure(kind));
+            }
+            return Err(ApiError::new(
+                404,
+                "NOTIFICATION_RESULT_NOT_FOUND",
+                "原提醒发布结果尚未建立",
+            ));
+        }
         if authorization_denial {
             let value: Value = serde_json::from_slice(&body).map_err(|_| failure(kind))?;
             return Err(match value["code"].as_str() {
@@ -329,8 +377,74 @@ impl PlatformClient {
     }
 }
 
+fn decode_notification(
+    bytes: &[u8],
+    started: std::time::Instant,
+    timeout: Duration,
+) -> Result<crate::reminders::Publication, ApiError> {
+    #[derive(serde::Deserialize)]
+    #[serde(rename_all = "camelCase", deny_unknown_fields)]
+    struct Reply {
+        contract_version: String,
+        publication: crate::reminders::Publication,
+        expires_at: String,
+    }
+    let reply: Reply =
+        serde_json::from_slice(bytes).map_err(|_| crate::reminders::result_unknown())?;
+    let now = chrono::Utc::now().timestamp_millis();
+    let expiry = chrono::DateTime::parse_from_rfc3339(&reply.expires_at)
+        .map_err(|_| crate::reminders::result_unknown())?
+        .timestamp_millis();
+    if reply.contract_version != "resource-notification/1"
+        || expiry <= now
+        || expiry > now.saturating_add(3000)
+        || std::time::Instant::now() >= started + timeout.min(Duration::from_secs(3))
+    {
+        return Err(crate::reminders::result_unknown());
+    }
+    let publication =
+        serde_json::to_vec(&reply.publication).map_err(|_| crate::reminders::result_unknown())?;
+    crate::reminders::Publication::from_bytes(&publication)
+}
+
+fn decode_directory(
+    value: Value,
+    started: std::time::Instant,
+    timeout: Duration,
+) -> Result<(Value, std::time::Instant), ApiError> {
+    #[derive(serde::Deserialize)]
+    #[serde(rename_all = "camelCase", deny_unknown_fields)]
+    struct Reply {
+        contract_version: String,
+        directory: String,
+        expires_at: String,
+        data: Value,
+    }
+    let reply: Reply =
+        serde_json::from_value(value).map_err(|_| ApiError::platform_unavailable())?;
+    let received = std::time::Instant::now();
+    let now = chrono::Utc::now().timestamp_millis();
+    let expires = chrono::DateTime::parse_from_rfc3339(&reply.expires_at)
+        .map_err(|_| ApiError::platform_unavailable())?
+        .timestamp_millis();
+    if reply.contract_version != "resource-directory/1"
+        || reply.directory != "members"
+        || !reply.data.is_object()
+        || expires <= now
+        || expires > now.saturating_add(3000)
+    {
+        return Err(ApiError::platform_unavailable());
+    }
+    let deadline = (received + Duration::from_millis((expires - now) as u64))
+        .min(started + timeout.min(Duration::from_secs(3)));
+    if std::time::Instant::now() >= deadline {
+        return Err(ApiError::platform_unavailable());
+    }
+    Ok((reply.data, deadline))
+}
+
 fn failure(kind: ResponseKind) -> ApiError {
-    if kind == ResponseKind::Reminder {
+    if matches!(kind, ResponseKind::Reminder | ResponseKind::ReminderResult) {
         crate::reminders::result_unknown()
     } else {
         ApiError::platform_unavailable()
@@ -353,5 +467,107 @@ impl std::fmt::Display for SanitizedClientSource {
 impl std::error::Error for SanitizedClientSource {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         Some(self.0.as_ref())
+    }
+}
+
+#[cfg(test)]
+mod directory_tests {
+    use super::*;
+    use serde_json::json;
+    fn reply(offset: i64) -> Value {
+        json!({"contractVersion":"resource-directory/1","directory":"members",
+            "expiresAt":chrono::DateTime::from_timestamp_millis(chrono::Utc::now().timestamp_millis()+offset).unwrap().to_rfc3339(),
+            "data":{"records":[],"total":0,"page":1,"size":20}})
+    }
+    #[test]
+    fn private_directory_wrapper_rejects_wrong_contract_kind_shape_and_deadline() {
+        let started = std::time::Instant::now();
+        for offset in [-1, 4000] {
+            assert!(decode_directory(reply(offset), started, Duration::from_secs(3)).is_err());
+        }
+        for (field, value) in [
+            ("contractVersion", json!("1.0")),
+            ("directory", json!("organizations")),
+            ("data", json!([])),
+            ("extra", Value::Null),
+        ] {
+            let mut v = reply(2000);
+            v[field] = value;
+            assert!(
+                decode_directory(v, started, Duration::from_secs(3)).is_err(),
+                "{field}"
+            );
+        }
+    }
+    #[test]
+    fn directory_response_cannot_renew_the_original_pre_http_window() {
+        let started = std::time::Instant::now() - Duration::from_millis(2500);
+        let (_, deadline) = decode_directory(reply(2000), started, Duration::from_secs(3)).unwrap();
+        assert!(deadline <= started + Duration::from_secs(3));
+        assert!(deadline <= std::time::Instant::now() + Duration::from_millis(500));
+        assert!(decode_directory(
+            reply(2000),
+            started - Duration::from_secs(1),
+            Duration::from_secs(3)
+        )
+        .is_err());
+    }
+}
+
+#[cfg(test)]
+mod notification_tests {
+    use super::*;
+    use serde_json::json;
+    fn reply(offset: i64) -> Value {
+        json!({"contractVersion":"resource-notification/1",
+            "expiresAt":chrono::DateTime::from_timestamp_millis(chrono::Utc::now().timestamp_millis()+offset).unwrap().to_rfc3339(),
+            "publication":{"publicationId":crate::uuid_v7::fixture(1).to_string(),"recipientCount":1,
+                "deliveryCount":1,"duplicate":false,"createdAt":"2026-10-28T00:00:00Z"}})
+    }
+    #[test]
+    fn notification_wrapper_cannot_extend_the_original_window_or_weaken_the_publication() {
+        let started = std::time::Instant::now();
+        assert!(decode_notification(
+            &serde_json::to_vec(&reply(2000)).unwrap(),
+            started,
+            Duration::from_secs(3)
+        )
+        .is_ok());
+        for offset in [-1, 4000] {
+            assert!(decode_notification(
+                &serde_json::to_vec(&reply(offset)).unwrap(),
+                started,
+                Duration::from_secs(3)
+            )
+            .is_err());
+        }
+        assert!(decode_notification(
+            &serde_json::to_vec(&reply(2000)).unwrap(),
+            started - Duration::from_secs(4),
+            Duration::from_secs(3)
+        )
+        .is_err());
+        for (path, bad) in [
+            ("contractVersion", json!("1.0")),
+            ("publication", json!([])),
+            ("extra", Value::Null),
+        ] {
+            let mut value = reply(2000);
+            value[path] = bad;
+            assert!(decode_notification(
+                &serde_json::to_vec(&value).unwrap(),
+                started,
+                Duration::from_secs(3)
+            )
+            .is_err());
+        }
+        let mut value = reply(2000);
+        value["publication"]["recipientCount"] = json!(2);
+        assert!(decode_notification(
+            &serde_json::to_vec(&value).unwrap(),
+            started,
+            Duration::from_secs(3)
+        )
+        .is_err());
     }
 }

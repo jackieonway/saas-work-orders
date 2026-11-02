@@ -23,9 +23,12 @@ services:
       WORK_ORDERS_DATABASE_URL: ${WORK_ORDERS_DATABASE_URL:?Set the dedicated business database URL}
       WORK_ORDERS_ALLOWED_ORIGINS: ${WORK_ORDERS_ALLOWED_ORIGINS:?Set the exact public qiankun host HTTPS origin}
       WORK_ORDERS_METRICS_TOKEN: ${WORK_ORDERS_METRICS_TOKEN:-}
-      PLATFORM_API_ORIGIN: ${PLATFORM_API_ORIGIN:?Set the real platform HTTPS origin}
-      PLATFORM_CLIENT_ID: ${PLATFORM_CLIENT_ID:?Set this application's confidential client ID}
-      PLATFORM_CLIENT_SECRET: ${PLATFORM_CLIENT_SECRET:?Set this application's confidential client secret}
+      PLATFORM_API_ORIGIN: ${PLATFORM_API_ORIGIN:?Set the private platform HTTPS origin}
+      PLATFORM_CLIENT_ID: ${PLATFORM_CLIENT_ID:?Set the independent APP_RESOURCE service ID}
+      PLATFORM_CLIENT_SECRET: ${PLATFORM_CLIENT_SECRET:?Set the independent APP_RESOURCE service secret}
+      PLATFORM_AUTHORIZATION_MODE: canonical
+      PLATFORM_IDENTITY_ISSUER: ${PLATFORM_IDENTITY_ISSUER:?Set the exact canonical identity HTTPS issuer}
+      PLATFORM_RESOURCE_SCOPE_BINDINGS: ${PLATFORM_RESOURCE_SCOPE_BINDINGS:?Set reviewed operation to OAuth scope JSON bindings}
     depends_on:
       work-orders-postgres: {condition: service_healthy}
     ports:

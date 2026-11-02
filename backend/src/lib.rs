@@ -2,10 +2,11 @@
 //!
 //! The executable owns only its business PostgreSQL pool. It never reads the
 //! platform database, automatically loads `.env` files, or invokes Node.js.
-//! Strict schema initialization finishes before the HTTP listener is created.
+//! Strict schema verification finishes before the HTTP listener is created;
+//! schema creation belongs to the independent migration command.
 //! This phase exposes process liveness and business database/schema readiness;
 //! authenticated read and export routes preserve the platform's per-request
-//! introspection/context boundary. Writes preserve transactional idempotency and
+//! private resource-authorization boundary. Writes preserve transactional idempotency and
 //! version checks. Member lookup and assignment use the platform's controlled
 //! direct-member API before business transactions. Reminders durably bind their
 //! event intent before one authorized platform publication attempt.
@@ -48,7 +49,7 @@ pub async fn initialize_database(
 
 /// Open the independent pool with bounded acquisition and server-side statement,
 /// lock and idle transaction limits. This does not execute migrations or claim
-/// readiness; call [`initialize_database`] before constructing [`router`].
+/// readiness; provision with the offline migrator before running the service.
 pub async fn connect_database(config: &Config) -> Result<PgPool, ServiceError> {
     let statement = format!("{}ms", config.statement_timeout.as_millis());
     let lock = format!("{}ms", config.lock_timeout.as_millis());
@@ -86,9 +87,15 @@ pub async fn run(config: Config) -> Result<(), ServiceError> {
         let authorizer = authorization::Authorizer::new(&config)?;
         let pool = connect_database(&config).await?;
         let initialized = match &config.database_initialization {
-            imported::Initialization::Seed => initialize_database(&pool).await.map_err(|error| {
-                ServiceError::caused_by(ServiceFailure::InitializationFailed, error)
-            }),
+            // A normal runtime verifies only. SQLx's migration-table CREATE
+            // (even IF NOT EXISTS) requires DDL privilege and belongs solely to
+            // work-orders-migrate, before the restricted API role starts.
+            imported::Initialization::Seed => migrations::verify_database(&pool)
+                .await
+                .map(|()| InitializationReport::AlreadyCurrent)
+                .map_err(|error| {
+                    ServiceError::caused_by(ServiceFailure::InitializationFailed, error)
+                }),
             imported::Initialization::Imported(receipt) => {
                 imported::verify(&pool, receipt, config.database.get_username())
                     .await
