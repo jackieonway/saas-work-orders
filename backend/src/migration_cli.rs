@@ -366,6 +366,34 @@ mod tests {
 
     #[test]
     fn local_peer_delegation_preserves_the_socket_and_exact_startup_role() {
+        // SQLx consults the real PG* environment even when our lookup is a
+        // fixture. Hosted Windows runners may set PGPASSWORD; production rejects
+        // those keys, so exercise the accepted peer URL in a clean child process.
+        const CLEAN_ENV: &str = "WORK_ORDERS_TEST_CLEAN_MIGRATION_ENV";
+        if std::env::var_os(CLEAN_ENV).is_none() {
+            let mut child = std::process::Command::new(std::env::current_exe().unwrap());
+            child
+                .args([
+                    "--exact",
+                    "migration_cli::tests::local_peer_delegation_preserves_the_socket_and_exact_startup_role",
+                    "--nocapture",
+                ])
+                .env(CLEAN_ENV, "1");
+            for (name, _) in std::env::vars_os() {
+                if name
+                    .to_string_lossy()
+                    .to_ascii_uppercase()
+                    .starts_with("PG")
+                {
+                    child.env_remove(name);
+                }
+            }
+            assert!(
+                child.status().unwrap().success(),
+                "clean peer URL test failed"
+            );
+            return;
+        }
         let raw = "postgresql://postgres@localhost:5432/new_database?host=/run/postgresql&options[role]=new_database_owner";
         let options = database_from_lookup(|_| Some(raw.into()), []).unwrap();
         assert_eq!(options.get_username(), "postgres");
